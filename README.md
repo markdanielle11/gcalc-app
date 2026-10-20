@@ -30,7 +30,15 @@ Honors (only when total units are more than 10):
 | 1.51 to 1.75 | College Scholar |
 | 1.76 to 2.00 | Dean's Lister |
 
-Grades and the theme are saved on the phone, so they are still there next time you open the app.
+Grades, subject names and the theme are saved on the phone, so they are still there next time you open the app.
+
+## Using it
+
+- Tap **Grade** on a subject to pick from the grade grid. Use **-** and **+** to set units (new subjects start at 3).
+- Name a subject (optional) by tapping its title.
+- **Add subject** adds a row and opens the grade picker right away.
+- Removing a subject or tapping **Clear all** shows an **Undo** button for a few seconds.
+- The GWA card stays at the top while you scroll, and tells you when a GWA would qualify for honors but needs more units.
 
 ## Project layout
 

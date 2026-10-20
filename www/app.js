@@ -1,33 +1,59 @@
 /* GCalc: GWA calculator for CLSU students.
    Port of github.com/AaronJay30/gwa-calculator (React) to plain JavaScript
-   so it can run offline inside the Android app and as an installable web app. */
+   so it runs offline inside the Android app and as an installable web app. */
 (function () {
 	"use strict";
 
 	var GRADES = ["1.00", "1.25", "1.50", "1.75", "2.00", "2.25", "2.50", "2.75", "3.00", "4.00", "5.00"];
+	var MIN_UNITS = 1;
 	var MAX_UNITS = 10;
+	var DEFAULT_UNITS = 3;
+	var HONORS_MIN_UNITS = 10; // honors need MORE than this many units
 	var STORAGE_KEY = "gcalc-state-v1";
-
-	// Font Awesome 5 "trash-alt" (regular), the same icon the original used via react-icons.
-	// Font Awesome Free, CC BY 4.0, https://fontawesome.com/license/free
-	var TRASH_ICON =
-		'<svg viewBox="0 0 448 512" aria-hidden="true" focusable="false"><path d="M268 416h24a12 12 0 0 0 12-12V188a12 12 0 0 0-12-12h-24a12 12 0 0 0-12 12v216a12 12 0 0 0 12 12zM432 80h-82.41l-34-56.7A48 48 0 0 0 274.41 0H173.59a48 48 0 0 0-41.16 23.3L98.41 80H16A16 16 0 0 0 0 96v16a16 16 0 0 0 16 16h16v336a48 48 0 0 0 48 48h288a48 48 0 0 0 48-48V128h16a16 16 0 0 0 16-16V96a16 16 0 0 0-16-16zM171.84 50.91A6 6 0 0 1 177 48h94a6 6 0 0 1 5.15 2.91L293.61 80H154.39zM368 464H80V128h288zm-212-48h24a12 12 0 0 0 12-12V188a12 12 0 0 0-12-12h-24a12 12 0 0 0-12 12v216a12 12 0 0 0 12 12z"/></svg>';
-
-	var state = loadState();
+	var TOAST_MS = 5000;
 
 	var els = {
-		result: document.getElementById("result"),
-		academic: document.getElementById("academic"),
-		rows: document.getElementById("rows"),
+		root: document.documentElement,
+		gwa: document.getElementById("gwa"),
+		standing: document.getElementById("standing"),
+		meta: document.getElementById("meta"),
+		hint: document.getElementById("hint"),
+		list: document.getElementById("list"),
 		add: document.getElementById("add-btn"),
-		toggle: document.getElementById("theme-toggle"),
-		themeColor: document.querySelector('meta[name="theme-color"]')
+		clear: document.getElementById("clear-btn"),
+		themeBtn: document.getElementById("theme-btn"),
+		themeColor: document.querySelector('meta[name="theme-color"]'),
+		sheet: document.getElementById("grade-sheet"),
+		sheetTitle: document.getElementById("sheet-title"),
+		sheetClose: document.getElementById("sheet-close"),
+		gradeGrid: document.getElementById("grade-grid"),
+		toast: document.getElementById("toast"),
+		toastText: document.getElementById("toast-text"),
+		toastUndo: document.getElementById("toast-undo")
 	};
+
+	var state = loadState();
+	var sheetRowId = null;
+	var toastTimer = null;
+	var undoAction = null;
+	var lastGwaText = null;
 
 	/* ---------- State ---------- */
 
-	function defaultState() {
-		return { isDark: true, rows: [{ id: 0, grades: 0, units: 0 }] };
+	function newRow(id) {
+		return { id: id, name: "", grades: 0, units: DEFAULT_UNITS };
+	}
+
+	function nextId() {
+		return state.rows.reduce(function (max, r) { return Math.max(max, r.id); }, -1) + 1;
+	}
+
+	function systemPrefersDark() {
+		try {
+			return !window.matchMedia("(prefers-color-scheme: light)").matches;
+		} catch (e) {
+			return true;
+		}
 	}
 
 	function loadState() {
@@ -35,18 +61,23 @@
 			var saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY));
 			if (saved && Array.isArray(saved.rows) && saved.rows.length > 0) {
 				return {
-					isDark: saved.isDark !== false,
+					isDark: typeof saved.isDark === "boolean" ? saved.isDark : systemPrefersDark(),
 					rows: saved.rows.map(function (r, i) {
 						var g = GRADES.indexOf(Number(r.grades).toFixed(2)) >= 0 ? Number(r.grades) : 0;
-						var u = Number(r.units) >= 1 && Number(r.units) <= MAX_UNITS ? Math.floor(Number(r.units)) : 0;
-						return { id: typeof r.id === "number" ? r.id : i, grades: g, units: u };
+						var u = Math.floor(Number(r.units));
+						return {
+							id: typeof r.id === "number" ? r.id : i,
+							name: typeof r.name === "string" ? r.name.slice(0, 40) : "",
+							grades: g,
+							units: u >= MIN_UNITS && u <= MAX_UNITS ? u : DEFAULT_UNITS
+						};
 					})
 				};
 			}
 		} catch (e) {
 			/* storage unavailable or corrupted: start fresh */
 		}
-		return defaultState();
+		return { isDark: systemPrefersDark(), rows: [newRow(0)] };
 	}
 
 	function saveState() {
@@ -57,20 +88,34 @@
 		}
 	}
 
+	function isPristine() {
+		return state.rows.length === 1 &&
+			state.rows[0].grades === 0 &&
+			state.rows[0].name === "" &&
+			state.rows[0].units === DEFAULT_UNITS;
+	}
+
 	/* ---------- Computation (same formula and honors as the original) ---------- */
 
 	function compute(rows) {
 		var totalGrades = 0;
 		var totalUnits = 0;
+		var counted = 0;
 		rows.forEach(function (row) {
 			// Only rows with both a grade and units count toward the GWA.
 			if (row.grades > 0 && row.units > 0) {
 				totalGrades += row.grades * row.units;
 				totalUnits += row.units;
+				counted++;
 			}
 		});
 		var result = totalUnits !== 0 ? parseFloat((totalGrades / totalUnits).toFixed(4)) : 0.0;
-		return { result: result, totalUnits: totalUnits, academic: academicStanding(result, totalUnits) };
+		return {
+			result: result,
+			totalUnits: totalUnits,
+			counted: counted,
+			academic: academicStanding(result, totalUnits)
+		};
 	}
 
 	function academicStanding(result, totalUnits) {
@@ -80,88 +125,200 @@
 		return "";
 	}
 
-	/* ---------- Rendering ---------- */
-
-	function option(value, label, selected, disabled) {
-		var o = document.createElement("option");
-		o.value = value;
-		o.textContent = label;
-		if (selected) o.selected = true;
-		if (disabled) o.disabled = true;
-		return o;
+	/** 1.25 -> "1.25", 1.2045 -> "1.2045", 1 -> "1.00" */
+	function formatGwa(n) {
+		var s = n.toFixed(4).replace(/0+$/, "");
+		var decimals = s.split(".")[1] || "";
+		return decimals.length < 2 ? n.toFixed(2) : s;
 	}
 
+	function plural(n, word) {
+		return n + " " + word + (n === 1 ? "" : "s");
+	}
+
+	function rowLabel(row) {
+		var name = row.name.trim();
+		if (name) return name;
+		return "Subject " + (state.rows.indexOf(row) + 1);
+	}
+
+	/* ---------- Icons ---------- */
+
+	function icon(name) {
+		var ns = "http://www.w3.org/2000/svg";
+		var svg = document.createElementNS(ns, "svg");
+		svg.setAttribute("class", "icon");
+		svg.setAttribute("aria-hidden", "true");
+		var use = document.createElementNS(ns, "use");
+		use.setAttribute("href", "#i-" + name);
+		svg.appendChild(use);
+		return svg;
+	}
+
+	function el(tag, className, text) {
+		var e = document.createElement(tag);
+		if (className) e.className = className;
+		if (text !== undefined) e.textContent = text;
+		return e;
+	}
+
+	/* ---------- Rendering ---------- */
+
 	function buildRow(row, index) {
-		var wrap = document.createElement("div");
-		wrap.className = "row";
-		wrap.dataset.id = String(row.id);
+		var placeholder = "Subject " + (index + 1);
+		var li = el("li", "subject");
+		li.dataset.id = String(row.id);
 
-		var grade = document.createElement("select");
-		grade.name = "grades";
-		grade.className = "select select-grade";
-		grade.setAttribute("aria-label", "Grade, subject " + (index + 1));
-		grade.appendChild(option("0", "Select your grade", row.grades === 0, true));
-		GRADES.forEach(function (g) {
-			grade.appendChild(option(g, g, row.grades === parseFloat(g), false));
+		// Name + delete
+		var top = el("div", "subject-top");
+		var name = el("input", "subject-name");
+		name.type = "text";
+		name.value = row.name;
+		name.placeholder = placeholder;
+		name.maxLength = 40;
+		name.autocomplete = "off";
+		name.enterKeyHint = "done";
+		name.setAttribute("aria-label", placeholder + " name (optional)");
+		name.addEventListener("input", function () {
+			row.name = name.value;
+			saveState();
+			renderClearButton();
 		});
-		grade.classList.toggle("is-empty", row.grades === 0);
-		grade.addEventListener("change", function () {
-			updateRow(row.id, { grades: parseFloat(grade.value) });
-			grade.classList.remove("is-empty");
+		name.addEventListener("keydown", function (e) {
+			if (e.key === "Enter") name.blur();
 		});
-
-		var units = document.createElement("select");
-		units.name = "units";
-		units.className = "select select-units";
-		units.setAttribute("aria-label", "Units, subject " + (index + 1));
-		units.appendChild(option("0", "Units", row.units === 0, true));
-		for (var u = 1; u <= MAX_UNITS; u++) {
-			units.appendChild(option(String(u), String(u), row.units === u, false));
-		}
-		units.classList.toggle("is-empty", row.units === 0);
-		units.addEventListener("change", function () {
-			updateRow(row.id, { units: parseInt(units.value, 10) });
-			units.classList.remove("is-empty");
-		});
-
-		wrap.appendChild(grade);
-		wrap.appendChild(units);
+		top.appendChild(name);
 
 		if (state.rows.length > 1) {
-			var del = document.createElement("button");
+			var del = el("button", "icon-btn delete-btn");
 			del.type = "button";
-			del.className = "delete-btn";
-			del.setAttribute("aria-label", "Remove subject " + (index + 1));
-			del.innerHTML = TRASH_ICON;
+			del.setAttribute("aria-label", "Remove " + (row.name.trim() || placeholder));
+			del.appendChild(icon("trash"));
 			del.addEventListener("click", function () {
 				removeRow(row.id);
 			});
-			wrap.appendChild(del);
+			top.appendChild(del);
 		}
+		li.appendChild(top);
 
-		return wrap;
-	}
+		// Grade + units
+		var fields = el("div", "subject-fields");
 
-	function renderRows() {
-		els.rows.textContent = "";
-		state.rows.forEach(function (row, i) {
-			els.rows.appendChild(buildRow(row, i));
+		var grade = el("button", "field grade-btn" + (row.grades === 0 ? " is-empty" : ""));
+		grade.type = "button";
+		grade.dataset.role = "grade";
+		grade.setAttribute("aria-haspopup", "dialog");
+		grade.appendChild(el("span", "field-label", "Grade"));
+		grade.appendChild(el("span", "field-value", row.grades === 0 ? "Select" : row.grades.toFixed(2)));
+		grade.appendChild(icon("caret-down"));
+		grade.setAttribute("aria-label",
+			"Grade for " + (row.name.trim() || placeholder) + ": " + (row.grades === 0 ? "not selected" : row.grades.toFixed(2)));
+		grade.addEventListener("click", function () {
+			openSheet(row.id);
 		});
+		fields.appendChild(grade);
+
+		var stepper = el("div", "field stepper");
+		stepper.setAttribute("role", "group");
+		stepper.setAttribute("aria-label", "Units for " + (row.name.trim() || placeholder));
+
+		var minus = el("button", "step-btn");
+		minus.type = "button";
+		minus.setAttribute("aria-label", "Fewer units");
+		minus.appendChild(icon("minus"));
+		minus.disabled = row.units <= MIN_UNITS;
+
+		var value = el("div", "stepper-value");
+		value.appendChild(el("span", "field-label", "Units"));
+		var out = el("output", "field-value", String(row.units));
+		out.setAttribute("aria-live", "polite");
+		value.appendChild(out);
+
+		var plus = el("button", "step-btn");
+		plus.type = "button";
+		plus.setAttribute("aria-label", "More units");
+		plus.appendChild(icon("plus"));
+		plus.disabled = row.units >= MAX_UNITS;
+
+		function setUnits(u) {
+			row.units = Math.min(MAX_UNITS, Math.max(MIN_UNITS, u));
+			out.textContent = String(row.units);
+			minus.disabled = row.units <= MIN_UNITS;
+			plus.disabled = row.units >= MAX_UNITS;
+			renderSummary();
+			renderClearButton();
+			saveState();
+		}
+		minus.addEventListener("click", function () { setUnits(row.units - 1); });
+		plus.addEventListener("click", function () { setUnits(row.units + 1); });
+
+		stepper.appendChild(minus);
+		stepper.appendChild(value);
+		stepper.appendChild(plus);
+		fields.appendChild(stepper);
+
+		li.appendChild(fields);
+		return li;
 	}
 
-	function renderResult() {
+	function renderList() {
+		els.list.textContent = "";
+		state.rows.forEach(function (row, i) {
+			els.list.appendChild(buildRow(row, i));
+		});
+		renderClearButton();
+	}
+
+	function renderClearButton() {
+		els.clear.disabled = isPristine();
+	}
+
+	function renderSummary() {
 		var out = compute(state.rows);
-		els.result.textContent = String(out.result);
-		els.academic.textContent = out.academic;
+		var text = out.counted === 0 ? "0.00" : formatGwa(out.result);
+
+		els.gwa.textContent = text;
+		els.gwa.classList.toggle("is-empty", out.counted === 0);
+		if (lastGwaText !== null && text !== lastGwaText) {
+			els.gwa.classList.remove("bump");
+			void els.gwa.offsetWidth; // restart the animation
+			els.gwa.classList.add("bump");
+		}
+		lastGwaText = text;
+
+		els.standing.textContent = out.academic;
+		els.standing.hidden = out.academic === "";
+
+		els.meta.textContent = out.counted === 0
+			? plural(0, "unit")
+			: plural(out.totalUnits, "unit") + " · " + plural(out.counted, "subject");
+
+		els.hint.textContent = hintFor(out);
+	}
+
+	function hintFor(out) {
+		var missing = state.rows.length - out.counted;
+		if (out.counted === 0) {
+			return "Choose a grade for each subject to see your GWA.";
+		}
+		if (missing > 0) {
+			return plural(missing, "subject") + " without a grade " + (missing === 1 ? "is" : "are") + " not counted yet.";
+		}
+		if (out.academic === "" && out.totalUnits <= HONORS_MIN_UNITS) {
+			var possible = academicStanding(out.result, HONORS_MIN_UNITS + 1);
+			if (possible) {
+				return "This GWA qualifies for " + possible + " once you have more than " +
+					HONORS_MIN_UNITS + " units. You have " + out.totalUnits + ".";
+			}
+		}
+		return "";
 	}
 
 	function applyTheme() {
 		var dark = state.isDark;
-		document.body.classList.toggle("theme-dark", dark);
-		document.body.classList.toggle("theme-light", !dark);
-		// Checked = light, same as the original switch (moon when dark, sun when light)
-		els.toggle.checked = !dark;
-		els.toggle.setAttribute("aria-checked", String(!dark));
+		els.root.classList.toggle("theme-dark", dark);
+		els.root.classList.toggle("theme-light", !dark);
+		els.themeBtn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
 		var bg = dark ? "#1E2B4D" : "#D9E2FC";
 		if (els.themeColor) els.themeColor.setAttribute("content", bg);
 		// Lets the Android app color its status and navigation bars to match.
@@ -174,55 +331,164 @@
 		}
 	}
 
-	/* ---------- Actions ---------- */
+	/* ---------- Grade picker ---------- */
 
-	function updateRow(id, patch) {
-		state.rows = state.rows.map(function (r) {
-			if (r.id !== id) return r;
-			return {
-				id: r.id,
-				grades: patch.grades !== undefined ? patch.grades : r.grades,
-				units: patch.units !== undefined ? patch.units : r.units
-			};
-		});
-		renderResult();
-		saveState();
+	function findRow(id) {
+		for (var i = 0; i < state.rows.length; i++) {
+			if (state.rows[i].id === id) return state.rows[i];
+		}
+		return null;
 	}
 
-	function addRow() {
-		var last = state.rows[state.rows.length - 1];
-		var nextId = state.rows.length > 0 ? last.id + 1 : 0;
-		state.rows = state.rows.concat([{ id: nextId, grades: 0, units: 0 }]);
-		renderRows();
-		renderResult();
-		saveState();
-		var newRow = els.rows.lastElementChild;
-		if (newRow) {
-			newRow.classList.add("row-new");
-			if (newRow.scrollIntoView) newRow.scrollIntoView({ block: "nearest" });
+	function openSheet(rowId) {
+		var row = findRow(rowId);
+		if (!row) return;
+		sheetRowId = rowId;
+		els.sheetTitle.textContent = "Grade for " + rowLabel(row);
+
+		els.gradeGrid.textContent = "";
+		var selected = null;
+		GRADES.forEach(function (g) {
+			var b = el("button", "grade-option", g);
+			b.type = "button";
+			b.setAttribute("role", "option");
+			var isSel = row.grades === parseFloat(g);
+			b.setAttribute("aria-selected", String(isSel));
+			if (isSel) selected = b;
+			b.addEventListener("click", function () {
+				chooseGrade(parseFloat(g));
+			});
+			els.gradeGrid.appendChild(b);
+		});
+
+		if (typeof els.sheet.showModal === "function") {
+			els.sheet.showModal();
+		} else {
+			els.sheet.setAttribute("open", "");
+		}
+		(selected || els.gradeGrid.firstChild).focus();
+	}
+
+	function closeSheet() {
+		if (typeof els.sheet.close === "function") {
+			els.sheet.close();
+		} else {
+			els.sheet.removeAttribute("open");
 		}
 	}
 
-	function removeRow(id) {
-		state.rows = state.rows.filter(function (r) {
-			return r.id !== id;
-		});
-		if (state.rows.length === 0) state.rows = defaultState().rows;
-		renderRows();
-		renderResult();
+	function chooseGrade(value) {
+		var row = findRow(sheetRowId);
+		if (row) {
+			row.grades = value;
+			saveState();
+		}
+		closeSheet();
+		renderList();
+		renderSummary();
+		focusRowControl(sheetRowId, "grade");
+	}
+
+	function focusRowControl(rowId, role) {
+		var li = els.list.querySelector('[data-id="' + rowId + '"]');
+		var target = li && li.querySelector('[data-role="' + role + '"]');
+		if (target) target.focus({ preventScroll: true });
+	}
+
+	els.sheetClose.addEventListener("click", closeSheet);
+	els.sheet.addEventListener("click", function (e) {
+		// Tap on the dimmed area outside the sheet closes it.
+		if (e.target !== els.sheet) return;
+		var r = els.sheet.getBoundingClientRect();
+		var inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+		if (!inside) closeSheet();
+	});
+
+	/* ---------- Toast with undo ---------- */
+
+	function showToast(message, onUndo) {
+		window.clearTimeout(toastTimer);
+		undoAction = onUndo;
+		els.toastText.textContent = message;
+		els.toast.hidden = false;
+		toastTimer = window.setTimeout(hideToast, TOAST_MS);
+	}
+
+	function hideToast() {
+		window.clearTimeout(toastTimer);
+		els.toast.hidden = true;
+		undoAction = null;
+	}
+
+	els.toastUndo.addEventListener("click", function () {
+		var fn = undoAction;
+		hideToast();
+		if (fn) fn();
+	});
+
+	/* ---------- Actions ---------- */
+
+	function addRow() {
+		var row = newRow(nextId());
+		state.rows = state.rows.concat([row]);
 		saveState();
+		renderList();
+		renderSummary();
+		var li = els.list.lastElementChild;
+		if (li) {
+			li.classList.add("is-new");
+			li.scrollIntoView({ block: "nearest", behavior: "smooth" });
+		}
+		openSheet(row.id);
+	}
+
+	function removeRow(id) {
+		var index = -1;
+		for (var i = 0; i < state.rows.length; i++) {
+			if (state.rows[i].id === id) index = i;
+		}
+		if (index < 0) return;
+		var removed = state.rows[index];
+		var label = rowLabel(removed);
+		state.rows = state.rows.filter(function (r) { return r.id !== id; });
+		if (state.rows.length === 0) state.rows = [newRow(nextId())];
+		saveState();
+		renderList();
+		renderSummary();
+		showToast("Removed " + label, function () {
+			state.rows.splice(Math.min(index, state.rows.length), 0, removed);
+			saveState();
+			renderList();
+			renderSummary();
+		});
+	}
+
+	function clearAll() {
+		if (isPristine()) return;
+		var previous = state.rows;
+		state.rows = [newRow(nextId())];
+		saveState();
+		renderList();
+		renderSummary();
+		showToast("Cleared all subjects", function () {
+			state.rows = previous;
+			saveState();
+			renderList();
+			renderSummary();
+		});
 	}
 
 	els.add.addEventListener("click", addRow);
-	els.toggle.addEventListener("change", function () {
-		state.isDark = !els.toggle.checked;
+	els.clear.addEventListener("click", clearAll);
+	els.themeBtn.addEventListener("click", function () {
+		state.isDark = !state.isDark;
 		applyTheme();
 		saveState();
 	});
 
 	applyTheme();
-	renderRows();
-	renderResult();
+	renderList();
+	renderSummary();
 
 	// Offline support when served over http(s) (GitHub Pages / installed web app).
 	// Inside the Android app the files are already on the phone, so this is skipped.
@@ -233,5 +499,5 @@
 	}
 
 	// Exposed for automated tests only.
-	window.__gcalc = { compute: compute, academicStanding: academicStanding };
+	window.__gcalc = { compute: compute, academicStanding: academicStanding, formatGwa: formatGwa };
 })();

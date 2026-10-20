@@ -20,39 +20,85 @@
 
 	<link rel="preload" href="fonts/Outfit.ttf" as="font" type="font/ttf" crossorigin />
 	<link rel="stylesheet" href="app.css" />
+
+	<!-- Apply the saved theme before first paint so there is no flash. -->
+	<script>
+		(function () {
+			var dark = true;
+			try {
+				var s = JSON.parse(localStorage.getItem("gcalc-state-v1"));
+				if (s && typeof s.isDark === "boolean") dark = s.isDark;
+				else if (window.matchMedia) dark = !window.matchMedia("(prefers-color-scheme: light)").matches;
+			} catch (e) {}
+			document.documentElement.className = dark ? "theme-dark" : "theme-light";
+		})();
+	</script>
 </head>
-<body class="theme-dark">
-	<main class="page">
-		<div class="container">
-			<!-- Headings -->
-			<header class="heading">
-				<h1 class="title">GWA Calculator</h1>
-				<div class="theme-switch">
-					<span class="theme-label" id="theme-label">Theme</span>
-					<label class="switch">
-						<input type="checkbox" id="theme-toggle" role="switch" aria-labelledby="theme-label" />
-						<span class="slider"></span>
-					</label>
+<body>
+	<!-- Icons: Phosphor Icons (regular), MIT License, https://phosphoricons.com -->
+	<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true"><symbol id="i-arrow-counter-clockwise" viewBox="0 0 256 256"><path d="M224,128a96,96,0,0,1-94.71,96H128A95.38,95.38,0,0,1,62.1,197.8a8,8,0,0,1,11-11.63A80,80,0,1,0,71.43,71.39a3.07,3.07,0,0,1-.26.25L44.59,96H72a8,8,0,0,1,0,16H24a8,8,0,0,1-8-8V56a8,8,0,0,1,16,0V85.8L60.25,60A96,96,0,0,1,224,128Z"/></symbol><symbol id="i-caret-down" viewBox="0 0 256 256"><path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"/></symbol><symbol id="i-minus" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128Z"/></symbol><symbol id="i-moon" viewBox="0 0 256 256"><path d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.34A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.34Z"/></symbol><symbol id="i-plus" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></symbol><symbol id="i-sun" viewBox="0 0 256 256"><path d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></symbol><symbol id="i-trash" viewBox="0 0 256 256"><path d="M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z"/></symbol><symbol id="i-x" viewBox="0 0 256 256"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/></symbol></svg>
+
+	<div class="app">
+		<header class="topbar">
+			<h1 class="title">GWA Calculator</h1>
+			<button type="button" class="icon-btn" id="theme-btn">
+				<svg class="icon icon-sun" aria-hidden="true"><use href="#i-sun"></use></svg>
+				<svg class="icon icon-moon" aria-hidden="true"><use href="#i-moon"></use></svg>
+			</button>
+		</header>
+
+		<section class="summary" aria-labelledby="gwa-label">
+			<div class="summary-card">
+				<div class="summary-main">
+					<p class="summary-label" id="gwa-label">Your GWA</p>
+					<p class="gwa" id="gwa" aria-live="polite">0.00</p>
 				</div>
-			</header>
+				<div class="summary-side">
+					<p class="standing" id="standing" hidden></p>
+					<p class="meta" id="meta">0 units</p>
+				</div>
+				<p class="hint" id="hint"></p>
+			</div>
+		</section>
 
-			<!-- Result Section -->
-			<section class="card result-card" aria-live="polite">
-				<p class="result" id="result">0</p>
-				<p class="academic" id="academic"></p>
-			</section>
+		<section class="subjects" aria-labelledby="subjects-title">
+			<div class="subjects-head">
+				<h2 class="subjects-title" id="subjects-title">Subjects</h2>
+				<button type="button" class="text-btn" id="clear-btn">
+					<svg class="icon" aria-hidden="true"><use href="#i-arrow-counter-clockwise"></use></svg>
+					Clear all
+				</button>
+			</div>
 
-			<!-- Grades and units -->
-			<section class="card input-card">
-				<div class="rows" id="rows"></div>
-				<button type="button" class="add-btn" id="add-btn">Add</button>
-			</section>
-		</div>
+			<ol class="subject-list" id="list"></ol>
+
+			<button type="button" class="add-btn" id="add-btn">
+				<svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+				Add subject
+			</button>
+		</section>
 
 		<footer class="footer">
 			<a href="https://aaronjay30.github.io/aaronjay_portfolio/" target="_blank" rel="noopener">© Aaron Jay Gabato. Buy me a Coffee! ☕</a>
 		</footer>
-	</main>
+	</div>
+
+	<!-- Grade picker -->
+	<dialog class="sheet" id="grade-sheet" aria-labelledby="sheet-title">
+		<div class="sheet-head">
+			<h2 class="sheet-title" id="sheet-title">Grade</h2>
+			<button type="button" class="icon-btn" id="sheet-close" aria-label="Close">
+				<svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+			</button>
+		</div>
+		<div class="grade-grid" id="grade-grid" role="listbox" aria-labelledby="sheet-title"></div>
+	</dialog>
+
+	<!-- Undo message -->
+	<div class="toast" id="toast" role="status" aria-live="polite" hidden>
+		<span class="toast-text" id="toast-text"></span>
+		<button type="button" class="toast-btn" id="toast-undo">Undo</button>
+	</div>
 
 	<script src="app.js"></script>
 </body>
