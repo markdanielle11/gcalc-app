@@ -4,11 +4,15 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.Insets;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Base64;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -25,6 +29,16 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.Text;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -54,6 +68,7 @@ public class MainActivity extends Activity {
     private FrameLayout root;
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
+    private TextRecognizer textRecognizer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -239,7 +254,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Called from app.js whenever the theme switch changes. */
+    /** Called from the page (app.js / ocr.js). */
     private class Bridge {
         @JavascriptInterface
         public void setTheme(final boolean dark) {
@@ -247,6 +262,93 @@ public class MainActivity extends Activity {
             editor.putBoolean(PREF_DARK, dark).apply();
             runOnUiThread(() -> applyTheme(dark));
         }
+
+        @JavascriptInterface
+        public boolean nativeTextAvailable() {
+            return true;
+        }
+
+        /**
+         * Reads the text in an image with Google ML Kit (on the phone, no internet).
+         * The result goes back to window.GCalcNativeText(id, layout, error).
+         */
+        @JavascriptInterface
+        public void recognizeText(final String requestId, final String base64) {
+            try {
+                byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
+                Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                if (bitmap == null) {
+                    deliverText(requestId, null, "That file could not be opened as an image.");
+                    return;
+                }
+                // Small screenshots: enlarge so letters are big enough to read well.
+                float scale = Math.min(3f, 1600f / Math.max(1, bitmap.getWidth()));
+                if (scale > 1.05f) {
+                    bitmap = Bitmap.createScaledBitmap(bitmap,
+                            Math.round(bitmap.getWidth() * scale), Math.round(bitmap.getHeight() * scale), true);
+                }
+                final int width = bitmap.getWidth();
+                final int height = bitmap.getHeight();
+                if (textRecognizer == null) {
+                    textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+                }
+                textRecognizer.process(InputImage.fromBitmap(bitmap, 0))
+                        .addOnSuccessListener(text -> {
+                            try {
+                                deliverText(requestId, layoutJson(text, width, height), null);
+                            } catch (JSONException e) {
+                                deliverText(requestId, null, "Could not read the result.");
+                            }
+                        })
+                        .addOnFailureListener(e -> deliverText(requestId, null, String.valueOf(e.getMessage())));
+            } catch (Throwable t) {
+                deliverText(requestId, null, String.valueOf(t.getMessage()));
+            }
+        }
+    }
+
+    private static JSONArray boxJson(Rect r) throws JSONException {
+        JSONArray a = new JSONArray();
+        if (r == null) return a;
+        a.put(r.left);
+        a.put(r.top);
+        a.put(r.right);
+        a.put(r.bottom);
+        return a;
+    }
+
+    private static String layoutJson(Text text, int width, int height) throws JSONException {
+        JSONArray lines = new JSONArray();
+        for (Text.TextBlock block : text.getTextBlocks()) {
+            for (Text.Line line : block.getLines()) {
+                JSONObject l = new JSONObject();
+                l.put("text", line.getText());
+                l.put("box", boxJson(line.getBoundingBox()));
+                JSONArray elements = new JSONArray();
+                for (Text.Element element : line.getElements()) {
+                    if (element.getBoundingBox() == null) continue;
+                    JSONObject e = new JSONObject();
+                    e.put("text", element.getText());
+                    e.put("box", boxJson(element.getBoundingBox()));
+                    elements.put(e);
+                }
+                l.put("elements", elements);
+                lines.put(l);
+            }
+        }
+        JSONObject out = new JSONObject();
+        out.put("width", width);
+        out.put("height", height);
+        out.put("lines", lines);
+        return out.toString();
+    }
+
+    private void deliverText(final String requestId, final String layoutJson, final String error) {
+        final String js = "window.GCalcNativeText && window.GCalcNativeText("
+                + JSONObject.quote(requestId) + ","
+                + (layoutJson == null ? "null" : layoutJson) + ","
+                + JSONObject.quote(error == null ? "" : error) + ")";
+        webView.post(() -> webView.evaluateJavascript(js, null));
     }
 
     @Override
@@ -257,6 +359,9 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (textRecognizer != null) {
+            textRecognizer.close();
+        }
         if (webView != null) {
             webView.removeJavascriptInterface("GCalcAndroid");
             webView.destroy();

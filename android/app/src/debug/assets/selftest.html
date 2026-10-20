@@ -6,7 +6,7 @@
 <title>GCalc self-test</title>
 </head>
 <body>
-<p id="out">Running</p>
+<pre id="out">Running</pre>
 <script>window.GCALC_DEBUG = true;</script>
 <!-- Debug builds only: CI opens this page in an emulator to check that the
      offline text reader works inside the Android app. -->
@@ -50,19 +50,46 @@
 	cols.forEach(function (x) { line(x, 0, x, c.height); });
 
 	function done(msg) {
-		document.getElementById("out").textContent = msg;
+		var out = document.getElementById("out");
+		out.textContent += "\n" + msg;
 		console.log(msg);
 	}
-	c.toBlob(function (blob) {
+	function blobOf(canvas, scale) {
+		return new Promise(function (resolve) {
+			var t = canvas;
+			if (scale !== 1) {
+				t = document.createElement("canvas");
+				t.width = Math.round(canvas.width * scale);
+				t.height = Math.round(canvas.height * scale);
+				var x = t.getContext("2d");
+				x.imageSmoothingQuality = "high";
+				x.drawImage(canvas, 0, 0, t.width, t.height);
+			}
+			t.toBlob(resolve, "image/png");
+		});
+	}
+	async function run(label, scale, forceTesseract) {
+		window.GCALC_FORCE_TESSERACT = forceTesseract;
 		var t0 = Date.now();
-		window.GCalcOCR.read(blob, function () {}).then(function (res) {
+		try {
+			var res = await window.GCalcOCR.read(await blobOf(c, scale), function () {});
 			var got = res.rows.map(function (r) { return [r.name, r.units, r.grades]; });
 			var ok = JSON.stringify(got) === JSON.stringify(expected);
-			done("GCALC_SELFTEST " + (ok ? "PASS" : "FAIL") + " " + res.mode + " " + (Date.now() - t0) + "ms " + JSON.stringify(got));
-		}).catch(function (e) {
-			done("GCALC_SELFTEST FAIL error " + (e && (e.message || e)));
-		});
-	}, "image/png");
+			// Inside the Android app the AI cases must really use the on-device AI reader.
+			if (!forceTesseract && window.GCalcAndroid && res.mode !== "ai") ok = false;
+			done("GCALC_CASE " + label + " " + (ok ? "PASS" : "FAIL") + " " + res.mode + " " + (Date.now() - t0) + "ms " + JSON.stringify(got));
+			return ok;
+		} catch (e) {
+			done("GCALC_CASE " + label + " FAIL error " + (e && (e.message || e)));
+			return false;
+		}
+	}
+	(async function () {
+		var ai = await run("ai", 1, false);
+		var aiSmall = await run("ai-small", 0.5, false); // reported, not required
+		var tess = await run("tesseract", 1, true);
+		done("GCALC_SELFTEST " + (ai && tess ? "PASS" : "FAIL") + " ai=" + ai + " ai-small=" + aiSmall + " tesseract=" + tess);
+	})();
 })();
 </script>
 </body>

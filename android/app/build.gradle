@@ -18,6 +18,11 @@ android {
         targetSdk 35
         versionCode Integer.parseInt(System.getenv('GCALC_VERSION_CODE') ?: '1')
         versionName System.getenv('GCALC_VERSION_NAME') ?: '1.0'
+
+        // Phones (arm) and the CI emulator (x86_64); keeps the APK smaller.
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
     }
 
     signingConfigs {
@@ -54,4 +59,10 @@ android {
     lint {
         abortOnError false
     }
+}
+
+dependencies {
+    // Google ML Kit text recognition (on-device AI, model bundled in the APK,
+    // works offline). Used by Import to read grade screenshots.
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
 }

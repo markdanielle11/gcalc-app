@@ -114,19 +114,29 @@
 		return bands;
 	}
 
-	/* Left and right ends of each horizontal line. */
+	/* Left and right ends of each horizontal line: the longest unbroken stretch,
+	   so a box border that happens to sit at the same height (a sidebar card,
+	   say) is not counted as part of the table line. */
 	function addExtents(lines, eraseH, W) {
 		lines.forEach(function (line) {
-			var left = W, right = 0;
+			var present = new Uint8Array(W);
 			for (var y = line[0]; y <= line[1]; y++) {
-				for (var x = 0; x < W; x++) {
-					if (eraseH[y * W + x]) {
-						if (x < left) left = x;
-						if (x > right) right = x;
-					}
+				for (var x = 0; x < W; x++) if (eraseH[y * W + x]) present[x] = 1;
+			}
+			var best = [0, 0], start = -1, gap = 0;
+			for (var i = 0; i <= W; i++) {
+				if (i < W && present[i]) {
+					if (start < 0) start = i;
+					gap = 0;
+				} else if (start >= 0) {
+					if (i < W && ++gap <= 6) continue; // tolerate tiny breaks
+					var end = i - gap;
+					if (end - start > best[1] - best[0]) best = [start, end];
+					start = -1;
+					gap = 0;
 				}
 			}
-			line.extent = [left, right];
+			line.extent = best;
 		});
 	}
 
@@ -218,48 +228,81 @@
 			if (grid.rows.length < 2 || grid.cols.length < 3) grid = null;
 		}
 
-		return { canvas: canvas, clean: clean, W: W, H: H, grid: grid };
+		// Grayscale copy with the table lines painted white, for reading cells:
+		// smooth letter edges read better than hard black and white.
+		for (var e = 0; e < n; e++) if (eraseH[e] || eraseV[e]) gray[e] = 255;
+
+		return { canvas: canvas, clean: clean, gray: gray, W: W, H: H, grid: grid };
 	}
 
-	/* Copies one cell (text only) onto a small white canvas with a margin. */
+	/* Finds the text inside one cell. Returns null for an empty cell, otherwise
+	   an object that can draw the cell as "binary" (clean black on white) or
+	   "gray" (smooth edges, better for small text), enlarged so letters are
+	   about 40px tall, which is what the reader handles best. */
 	function cropCell(prep, x0, y0, x1, y1) {
-		var W = prep.W, clean = prep.clean;
+		var W = prep.W, clean = prep.clean, gray = prep.gray;
 		var minX = x1, minY = y1, maxX = x0, maxY = y0, count = 0;
+		var rowsWithInk = 0;
 		for (var y = y0; y <= y1; y++) {
+			var any = false;
 			for (var x = x0; x <= x1; x++) {
 				if (clean[y * W + x]) {
 					count++;
+					any = true;
 					if (x < minX) minX = x;
 					if (x > maxX) maxX = x;
 					if (y < minY) minY = y;
 					if (y > maxY) maxY = y;
 				}
 			}
+			if (any) rowsWithInk++;
 		}
 		if (count < 25 || maxX - minX < 4 || maxY - minY < 8) return null; // empty cell
 
-		var pad = 20;
+		minX = Math.max(x0, minX - 2);
+		minY = Math.max(y0, minY - 2);
+		maxX = Math.min(x1, maxX + 2);
+		maxY = Math.min(y1, maxY + 2);
 		var w = maxX - minX + 1, h = maxY - minY + 1;
-		var c = document.createElement("canvas");
-		c.width = w + pad * 2;
-		c.height = h + pad * 2;
-		var ctx = c.getContext("2d");
-		var img = ctx.createImageData(c.width, c.height);
-		var d = img.data;
-		for (var i = 0; i < d.length; i += 4) {
-			d[i] = d[i + 1] = d[i + 2] = 255;
-			d[i + 3] = 255;
-		}
-		for (var yy = 0; yy < h; yy++) {
-			for (var xx = 0; xx < w; xx++) {
-				if (clean[(minY + yy) * W + (minX + xx)]) {
-					var o = ((yy + pad) * c.width + (xx + pad)) * 4;
-					d[o] = d[o + 1] = d[o + 2] = 0;
+
+		// Roughly one line of text is rowsWithInk tall (two for a wrapped code).
+		var lineHeight = rowsWithInk > 60 && rowsWithInk > h * 0.6 ? rowsWithInk / 2 : rowsWithInk;
+		var scale = Math.max(1, Math.min(4, 40 / Math.max(1, lineHeight)));
+		var cache = {};
+
+		function make(kind) {
+			if (cache[kind]) return cache[kind];
+			var src = document.createElement("canvas");
+			src.width = w;
+			src.height = h;
+			var sctx = src.getContext("2d");
+			var img = sctx.createImageData(w, h);
+			var d = img.data;
+			for (var yy = 0; yy < h; yy++) {
+				for (var xx = 0; xx < w; xx++) {
+					var i = (minY + yy) * W + (minX + xx);
+					var v = kind === "gray" ? gray[i] : (clean[i] ? 0 : 255);
+					var o = (yy * w + xx) * 4;
+					d[o] = d[o + 1] = d[o + 2] = v;
+					d[o + 3] = 255;
 				}
 			}
+			sctx.putImageData(img, 0, 0);
+			var pad = 24;
+			var c = document.createElement("canvas");
+			c.width = Math.round(w * scale) + pad * 2;
+			c.height = Math.round(h * scale) + pad * 2;
+			var ctx = c.getContext("2d");
+			ctx.fillStyle = "#fff";
+			ctx.fillRect(0, 0, c.width, c.height);
+			ctx.imageSmoothingEnabled = true;
+			ctx.imageSmoothingQuality = "high";
+			ctx.drawImage(src, pad, pad, Math.round(w * scale), Math.round(h * scale));
+			cache[kind] = c;
+			return c;
 		}
-		ctx.putImageData(img, 0, 0);
-		return c;
+
+		return { make: make, small: lineHeight < 30 };
 	}
 
 	function toGrade(token) {
@@ -341,10 +384,36 @@
 		return rows;
 	}
 
-	async function recognizeCell(worker, canvas, psm) {
-		await worker.setParameters({ tessedit_pageseg_mode: psm });
+	async function readText(worker, canvas, psm, whitelist) {
+		await worker.setParameters({ tessedit_pageseg_mode: psm, tessedit_char_whitelist: whitelist || WHITELIST });
 		var r = await worker.recognize(canvas);
-		return (r.data.text || "").replace(/\s+/g, " ").trim();
+		return { text: (r.data.text || "").replace(/\s+/g, " ").trim(), conf: r.data.confidence || 0 };
+	}
+
+	/* Reads a cell with each page mode until accept() takes the text. Small text is
+	   read both as black-and-white and as grayscale, and the more confident of
+	   the accepted readings wins. */
+	async function bestRead(worker, cell, psms, accept, whitelist) {
+		var kinds = cell.small ? ["binary", "gray"] : ["binary"];
+		var best = null, raw = [];
+		for (var k = 0; k < kinds.length; k++) {
+			var canvas = cell.make(kinds[k]);
+			for (var p = 0; p < psms.length; p++) {
+				var r = await readText(worker, canvas, psms[p], whitelist);
+				raw.push(r.text);
+				var value = accept(r.text);
+				if (value) {
+					if (!best || r.conf > best.conf) best = { value: value, conf: r.conf, text: r.text };
+					break;
+				}
+			}
+		}
+		if (window.GCALC_DEBUG) console.log("cell " + JSON.stringify(raw) + " -> " + (best ? JSON.stringify(best.value) : "none"));
+		return { best: best, raw: raw };
+	}
+
+	function hasWords(text) {
+		return /[A-Za-z]{3,}/.test(text.replace(/[OoSsIlBZ]/g, ""));
 	}
 
 	/* Table mode: walk each row's cells left to right: [No.] Subject, Units, Grade, ... */
@@ -365,40 +434,35 @@
 
 				if (phase === "subject") {
 					if (++tried > 3) break; // no code in the first cells: not a subject row
-					var t = await recognizeCell(worker, cell, "6");
-					var m = matchCode(t);
-					if (m) {
-						name = m.name;
+					var s1 = await bestRead(worker, cell, ["6"], matchCode);
+					if (s1.best) {
+						name = s1.best.value.name;
 						nameCol = c;
 						phase = "units";
 					}
 				} else if (phase === "units") {
-					// A lone digit is easy to miss as a block; read it as a single word.
-					var u = await recognizeCell(worker, cell, "8");
-					if (!toUnits(u)) u = await recognizeCell(worker, cell, "10");
-					if (toUnits(u)) {
-						units = toUnits(u);
+					// A lone digit is easy to miss as a block; read it as a single word or character.
+					var u1 = await bestRead(worker, cell, ["8", "10"], toUnits, "0123456789.");
+					if (u1.best) {
+						units = u1.best.value;
 						phase = "grade";
-					} else if (toGrade(u)) {
-						grade = toGrade(u);
-						break;
 					} else {
+						var asGrade = u1.raw.map(gradeFromText).filter(Boolean)[0];
+						if (asGrade) {
+							grade = asGrade;
+							break;
+						}
 						phase = "grade";
 						c--; // this cell may be the grade column; look at it again
-						continue;
 					}
 				} else {
-					var gtext = await recognizeCell(worker, cell, "7");
-					var words = /[A-Za-z]{3,}/.test(gtext.replace(/[OoSsIlBZ]/g, ""));
-					grade = words ? 0 : gradeFromText(gtext);
-					if (!grade && !words) {
+					var g1 = await bestRead(worker, cell, ["7"], function (t) { return hasWords(t) ? 0 : gradeFromText(t); });
+					if (g1.best) {
+						grade = g1.best.value;
+					} else if (!g1.raw.some(hasWords)) {
 						// No words in the cell, so it should be a number: read digits only.
-						await worker.setParameters({ tessedit_char_whitelist: "0123456789.," });
-						var dtext = await recognizeCell(worker, cell, "7");
-						if (!gradeFromText(dtext)) dtext = await recognizeCell(worker, cell, "8");
-						await worker.setParameters({ tessedit_char_whitelist: WHITELIST });
-						grade = gradeFromText(dtext);
-						if (window.GCALC_DEBUG) console.log("grade cell: " + JSON.stringify(gtext) + " digits: " + JSON.stringify(dtext));
+						var g2 = await bestRead(worker, cell, ["7", "8"], gradeFromText, "0123456789.,");
+						if (g2.best) grade = g2.best.value;
 					}
 					break; // first cell after units is the grade (or "NOT YET")
 				}
@@ -447,6 +511,156 @@
 		});
 	}
 
+	/* ---------- Layout mode (on-device AI text recognition on Android) ----------
+	   Input: lines of text with their positions, e.g. from Google ML Kit:
+	   [{ text, box: [left, top, right, bottom], elements: [{ text, box }] }].
+	   Rows are rebuilt from positions; the UNITS and GRADE headers, when found,
+	   decide which number in a row is which. */
+
+	function center(box) {
+		return [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2];
+	}
+
+	function headerX(elements, word) {
+		// Finds a header word, also when glued to its neighbour ("SUBJECTSUNITS").
+		for (var i = 0; i < elements.length; i++) {
+			var e = elements[i], t = e.text.toUpperCase();
+			var at = t.indexOf(word);
+			if (at < 0) continue;
+			var b = e.box, per = (b[2] - b[0]) / Math.max(1, t.length);
+			var end = t.indexOf(" ", at) < 0 ? at + word.length + (t[at + word.length] === "S" ? 1 : 0) : t.indexOf(" ", at);
+			return { x: b[0] + per * (at + end) / 2, y: center(b)[1], h: b[3] - b[1] };
+		}
+		return null;
+	}
+
+	function parseLayout(layout) {
+		var lines = (layout && layout.lines) || [];
+		var elements = [];
+		lines.forEach(function (l) {
+			(l.elements && l.elements.length ? l.elements : [l]).forEach(function (e) {
+				if (e.text && e.box) elements.push({ text: e.text.trim(), box: e.box });
+			});
+		});
+		if (!elements.length) return [];
+
+		var unitsH = headerX(elements, "UNIT");
+		var gradeH = headerX(elements, "GRADE");
+		var headerY = unitsH ? unitsH.y : gradeH ? gradeH.y : -Infinity;
+
+		// 1. Subject codes: "INTECH 3100" on one line, or "INTECH" above "3100".
+		var used = {};
+		var subjects = [];
+		elements.forEach(function (e, i) {
+			if (used[i] || center(e.box)[1] <= headerY) return;
+			var word = e.text.replace(/[^A-Z&]/g, "");
+			if (!/^[A-Z][A-Z&]{1,11}$/.test(e.text.replace(/[^A-Za-z&]/g, "")) || e.text !== e.text.toUpperCase()) return;
+			if (NOT_A_SUBJECT.test(word)) return;
+			var whole = matchCode(e.text);
+			if (whole) { // code and number in one element ("PE3", "NSTP12")
+				subjects.push({ name: whole.name, box: e.box.slice() });
+				used[i] = true;
+				return;
+			}
+			var h = e.box[3] - e.box[1];
+			var best = -1, bestDist = Infinity;
+			elements.forEach(function (f, j) {
+				if (j === i || used[j] || !/^\d{1,4}[A-Z]?$/.test(f.text)) return;
+				var sameLine = Math.abs(center(f.box)[1] - center(e.box)[1]) < h * 0.5 && f.box[0] > e.box[0] && f.box[0] - e.box[2] < h * 1.5;
+				var below = f.box[1] > e.box[1] + h * 0.5 && f.box[1] - e.box[3] < h * 1.2 && Math.abs(f.box[0] - e.box[0]) < h * 1.5;
+				if (!sameLine && !below) return;
+				var dist = Math.abs(f.box[0] - e.box[2]) + Math.abs(f.box[1] - e.box[1]);
+				if (dist < bestDist) {
+					bestDist = dist;
+					best = j;
+				}
+			});
+			if (best < 0) return;
+			var num = elements[best];
+			used[i] = used[best] = true;
+			subjects.push({
+				name: word + " " + num.text,
+				box: [Math.min(e.box[0], num.box[0]), Math.min(e.box[1], num.box[1]), Math.max(e.box[2], num.box[2]), Math.max(e.box[3], num.box[3])]
+			});
+		});
+		if (!subjects.length) return [];
+
+		// Real subjects line up in one column.
+		var lefts = subjects.map(function (s) { return s.box[0]; }).sort(function (a, b) { return a - b; });
+		var midLeft = lefts[Math.floor(lefts.length / 2)];
+		var width = layout.width || Math.max.apply(null, elements.map(function (e) { return e.box[2]; }));
+		subjects = subjects.filter(function (s) { return Math.abs(s.box[0] - midLeft) < width * 0.05; });
+
+		// 2. Units and grade: numbers on the same row, right of the subject.
+		var seen = {};
+		var rows = [];
+		subjects.sort(function (a, b) { return a.box[1] - b.box[1]; });
+		subjects.forEach(function (s) {
+			var top = s.box[1], bottom = s.box[3], h = bottom - top;
+			var inRow = elements.filter(function (e) {
+				var cy = center(e.box)[1];
+				return e.box[0] > s.box[2] - 2 && cy > top - h * 0.35 && cy < bottom + h * 0.35;
+			});
+			function pick(test, near) {
+				var cands = inRow.filter(function (e) { return test(e.text); });
+				if (!cands.length) return null;
+				cands.sort(function (a, b) {
+					return near ? Math.abs(center(a.box)[0] - near.x) - Math.abs(center(b.box)[0] - near.x) : a.box[0] - b.box[0];
+				});
+				return cands[0];
+			}
+			var u = pick(function (t) { return toUnits(t); }, unitsH);
+			var g = pick(function (t) { return !hasWords(t) && gradeFromText(t); }, gradeH);
+			if (g && u && g === u) u = null;
+			var key = s.name.replace(/\s+/g, "");
+			if (seen[key]) return;
+			seen[key] = true;
+			rows.push(makeRow(s.name, u ? toUnits(u.text) : 0, g ? gradeFromText(g.text) : 0));
+		});
+		return rows;
+	}
+
+	/* Asks the Android app to read the image with Google ML Kit (on-device). */
+	var nativeCalls = {};
+	window.GCalcNativeText = function (id, layout, error) {
+		var call = nativeCalls[id];
+		if (!call) return;
+		delete nativeCalls[id];
+		if (layout) call.resolve(layout);
+		else call.reject(new Error(error || "Text recognition failed."));
+	};
+
+	function hasNativeReader() {
+		try {
+			return !!(window.GCalcAndroid && window.GCalcAndroid.nativeTextAvailable && window.GCalcAndroid.nativeTextAvailable());
+		} catch (e) {
+			return false;
+		}
+	}
+
+	function readNative(file) {
+		return new Promise(function (resolve, reject) {
+			var fr = new FileReader();
+			fr.onerror = function () { reject(new Error("Could not open the image.")); };
+			fr.onload = function () {
+				var id = "r" + Date.now() + Math.random().toString(36).slice(2);
+				var timer = setTimeout(function () {
+					if (nativeCalls[id]) {
+						delete nativeCalls[id];
+						reject(new Error("Text recognition timed out."));
+					}
+				}, 30000);
+				nativeCalls[id] = {
+					resolve: function (v) { clearTimeout(timer); resolve(v); },
+					reject: function (e) { clearTimeout(timer); reject(e); }
+				};
+				var base64 = String(fr.result).split(",")[1] || "";
+				window.GCalcAndroid.recognizeText(id, base64);
+			};
+			fr.readAsDataURL(file);
+		});
+	}
+
 	/**
 	 * Reads a grades screenshot.
 	 * onProgress(0..1, label) is called while it works.
@@ -456,6 +670,24 @@
 		var report = typeof onProgress === "function" ? onProgress : function () {};
 		var worker = null;
 		report(0.02, "Opening image");
+
+		// Android app: Google's on-device text recognition is the most accurate.
+		if (hasNativeReader() && !window.GCALC_FORCE_TESSERACT) {
+			try {
+				report(0.3, "Reading text");
+				var layout = await readNative(file);
+				var aiRows = parseLayout(layout);
+				if (window.GCALC_DEBUG) console.log("native lines: " + JSON.stringify((layout.lines || []).map(function (l) { return l.text; })));
+				if (aiRows.length) {
+					report(1, "Done");
+					return { rows: aiRows, mode: "ai" };
+				}
+			} catch (e) {
+				if (window.GCALC_DEBUG) console.log("native reader failed: " + e.message);
+			}
+			report(0.05, "Trying another way");
+		}
+
 		try {
 			var loaded = await Promise.all([loadLibrary(), loadImage(file)]);
 			var T = loaded[0];
@@ -493,5 +725,5 @@
 		}
 	}
 
-	window.GCalcOCR = { read: read, parse: parse, _prepare: prepare };
+	window.GCalcOCR = { read: read, parse: parse, parseLayout: parseLayout, _prepare: prepare };
 })();
