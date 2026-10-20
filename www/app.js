@@ -118,10 +118,13 @@
 		};
 	}
 
+	// Same cutoffs as the original (1.50 / 1.75 / 2.00, more than 10 units), without the
+	// gaps it had between 1.50-1.51 and 1.75-1.76 where a GWA like 1.5050 got no standing.
 	function academicStanding(result, totalUnits) {
-		if (result <= 1.5 && totalUnits > 10) return "University Scholar";
-		if (result >= 1.51 && result <= 1.75 && totalUnits > 10) return "College Scholar";
-		if (result >= 1.76 && result <= 2.0 && totalUnits > 10) return "Dean's Lister";
+		if (result <= 0 || totalUnits <= HONORS_MIN_UNITS) return "";
+		if (result <= 1.5) return "University Scholar";
+		if (result <= 1.75) return "College Scholar";
+		if (result <= 2.0) return "Dean's Lister";
 		return "";
 	}
 
@@ -297,21 +300,22 @@
 	}
 
 	function hintFor(out) {
-		var missing = state.rows.length - out.counted;
 		if (out.counted === 0) {
 			return "Choose a grade for each subject to see your GWA.";
 		}
+		var hints = [];
+		var missing = state.rows.length - out.counted;
 		if (missing > 0) {
-			return plural(missing, "subject") + " without a grade " + (missing === 1 ? "is" : "are") + " not counted yet.";
+			hints.push(plural(missing, "subject") + " without a grade " + (missing === 1 ? "is" : "are") + " not counted yet.");
 		}
 		if (out.academic === "" && out.totalUnits <= HONORS_MIN_UNITS) {
 			var possible = academicStanding(out.result, HONORS_MIN_UNITS + 1);
 			if (possible) {
-				return "This GWA qualifies for " + possible + " once you have more than " +
-					HONORS_MIN_UNITS + " units. You have " + out.totalUnits + ".";
+				hints.push("Honors need more than " + HONORS_MIN_UNITS + " units. You have " + out.totalUnits +
+					", so " + possible + " will show once you add " + (HONORS_MIN_UNITS + 1 - out.totalUnits) + " more.");
 			}
 		}
-		return "";
+		return hints.join(" ");
 	}
 
 	function applyTheme() {

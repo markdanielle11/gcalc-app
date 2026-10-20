@@ -27,8 +27,8 @@ Honors (only when total units are more than 10):
 | GWA | Standing |
 | --- | --- |
 | 1.50 and below | University Scholar |
-| 1.51 to 1.75 | College Scholar |
-| 1.76 to 2.00 | Dean's Lister |
+| above 1.50 up to 1.75 | College Scholar |
+| above 1.75 up to 2.00 | Dean's Lister |
 
 Grades, subject names and the theme are saved on the phone, so they are still there next time you open the app.
 
