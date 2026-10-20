@@ -1686,20 +1686,6 @@
 			ctx.textAlign = "left";
 		}
 
-		// Brand
-		ctx.font = "600 44px " + font;
-		var brandW = 72 + 20 + ctx.measureText("GCalc").width;
-		var bx = CX - brandW / 2;
-		if (logo) {
-			ctx.save();
-			roundRect(ctx, bx, 262, 72, 72, 18);
-			ctx.clip();
-			ctx.drawImage(logo, bx, 262, 72, 72);
-			ctx.restore();
-		}
-		ctx.fillStyle = white;
-		ctx.fillText("GCalc", bx + 92, 313);
-
 		var name = (state.name || "").trim();
 		var label = state.terms.length > 1 ? cur().name + " GWA" : "General Weighted Average";
 		var y;
