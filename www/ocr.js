@@ -567,7 +567,7 @@
 			elements.forEach(function (f, j) {
 				if (j === i || used[j] || !/^\d{1,4}[A-Z]?$/.test(f.text)) return;
 				var sameLine = Math.abs(center(f.box)[1] - center(e.box)[1]) < h * 0.5 && f.box[0] > e.box[0] && f.box[0] - e.box[2] < h * 1.5;
-				var below = f.box[1] > e.box[1] + h * 0.5 && f.box[1] - e.box[3] < h * 1.2 && Math.abs(f.box[0] - e.box[0]) < h * 1.5;
+				var below = f.box[1] > e.box[1] + h * 0.5 && f.box[1] - e.box[3] < h * 2.2 && Math.abs(f.box[0] - e.box[0]) < h * 1.5;
 				if (!sameLine && !below) return;
 				var dist = Math.abs(f.box[0] - e.box[2]) + Math.abs(f.box[1] - e.box[1]);
 				if (dist < bestDist) {
