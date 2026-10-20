@@ -57,11 +57,16 @@ function score(item, rows) {
 	const server = await serve();
 	const base = `http://127.0.0.1:${server.address().port}`;
 	const browser = await pw[engine].launch();
-	const page = await browser.newPage();
 	const errors = [];
-	page.on("pageerror", (e) => errors.push(e.message));
-	await page.goto(base + "/index.html");
-	await page.waitForFunction(() => window.GCalcOCR);
+	let page = null;
+	async function freshPage() {
+		if (page) await page.close().catch(() => {});
+		page = await browser.newPage();
+		page.on("pageerror", (e) => errors.push((e.stack || e.message || String(e)).slice(0, 400)));
+		await page.goto(base + "/index.html");
+		await page.waitForFunction(() => window.GCalcOCR);
+	}
+	await freshPage();
 
 	let pass = 0;
 	const fails = [];
@@ -70,10 +75,7 @@ function score(item, rows) {
 	for (const item of expected) {
 		// A student imports a few screenshots per visit; start a fresh page every
 		// 25 so one long run doesn't pile up the browser's WebAssembly memory.
-		if (++count % 25 === 0) {
-			await page.reload();
-			await page.waitForFunction(() => window.GCalcOCR);
-		}
+		if (++count % 25 === 0) await freshPage();
 		const t0 = Date.now();
 		let res;
 		try {
@@ -83,7 +85,9 @@ function score(item, rows) {
 				return { mode: r.mode, rows: r.rows.map((x) => ({ name: x.name, units: x.units, grades: x.grades })) };
 			}, base + "/corpus/" + item.file);
 		} catch (e) {
-			res = { mode: "error", rows: [], error: e.message };
+			res = { mode: "error", rows: [], error: e.message.split("\n")[0].slice(0, 200) };
+			// Don't let one broken page fail the rest.
+			await freshPage().catch(() => {});
 		}
 		times.push(Date.now() - t0);
 		const problems = res.error ? ["error: " + res.error] : score(item, res.rows);

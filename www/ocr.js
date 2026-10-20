@@ -819,21 +819,27 @@
 	   don't add up to the TOTAL row, change the one units value whose next-best
 	   shape makes them add up. */
 	function fixUnitsByTotal(rows, total) {
+		if (window.GCALC_DEBUG) console.log("total " + total + " rows " + rows.map(function (r) { return r.rowNo + ":" + r.units; }).join(" "));
 		if (!total || !rows.length) return;
 		var sum = rows.reduce(function (a, r) { return a + r.units; }, 0);
-		var diff = total - sum;
-		if (!diff) return;
+		// A thin leading "1" is easy to lose in a small screenshot ("17" read as "7"),
+		// so the total may also be "1" + what was read.
+		var totals = [total, parseInt("1" + total, 10)];
+		if (totals.indexOf(sum) >= 0) return; // adds up
 		var nos = rows.map(function (r) { return r.rowNo; }).sort(function (a, b) { return a - b; });
 		for (var i = 0; i < nos.length; i++) if (nos[i] !== i + 1) return; // rows missing or unnumbered
 		var best = null;
-		rows.forEach(function (r) {
-			if (!r.unitsRank || !r.unitsFound) return;
-			var cur = r.unitsRank.filter(function (x) { return x.value === r.units; })[0];
-			var curScore = cur ? cur.score : 0;
-			r.unitsRank.slice(0, 4).forEach(function (alt) {
-				if (alt.value - r.units !== diff || alt.score < 0.4) return;
-				var cost = curScore - alt.score;
-				if (!best || cost < best.cost) best = { row: r, value: alt.value, cost: cost };
+		totals.forEach(function (t) {
+			var diff = t - sum;
+			rows.forEach(function (r) {
+				if (!r.unitsRank || !r.unitsFound) return;
+				var cur = r.unitsRank.filter(function (x) { return x.value === r.units; })[0];
+				var curScore = cur ? cur.score : 0;
+				r.unitsRank.slice(0, 4).forEach(function (alt) {
+					if (alt.value - r.units !== diff || alt.score < 0.4) return;
+					var cost = curScore - alt.score;
+					if (!best || cost < best.cost) best = { row: r, value: alt.value, cost: cost };
+				});
 			});
 		});
 		if (best) {
@@ -1091,7 +1097,17 @@
 				var r = bandIndex(grid.rows, (box[1] + box[3]) / 2);
 				if (r < 0) return;
 				var text = e.text.trim();
-				var per = (box[2] - box[0]) / Math.max(1, text.length);
+				// Mostly inside one column: the whole word belongs there (the AI's boxes
+				// run a little wide, which would otherwise chop "1100" into "11" + "00").
+				var width = Math.max(1, box[2] - box[0]);
+				for (var ci = 0; ci < grid.cols.length; ci++) {
+					var ov = Math.min(box[2], grid.cols[ci][1]) - Math.max(box[0], grid.cols[ci][0]);
+					if (ov / width >= 0.75) {
+						add(r, ci, text, box);
+						return;
+					}
+				}
+				var per = width / Math.max(1, text.length);
 				var parts = {};
 				for (var i = 0; i < text.length; i++) {
 					var c = bandIndex(grid.cols, box[0] + per * (i + 0.5));
@@ -1145,7 +1161,7 @@
 					if (m && m.index <= 3) {
 						var mp = m.name.split(" ");
 						name = fixPrefix(mp[0]) + " " + mp.slice(1).join(" ");
-					} else if (cell && /[A-Za-z]{2}/.test(text) && /\d/.test(text)) {
+					} else if (cell && /[A-Za-z]/.test(text) && /\d/.test(text)) {
 						// Looks like a code the AI garbled: let Tesseract try this cell.
 						name = await readSubject(await getTesseract(), cell);
 					}
