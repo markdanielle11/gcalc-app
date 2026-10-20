@@ -15,6 +15,18 @@
 	var STORAGE_KEY = "gcalc-state-v1";
 	var TOAST_MS = 5000;
 	var TERM_NAMES = ["1st Semester", "2nd Semester", "Midyear"];
+
+	/* The current school year: it starts in August (October 2026 -> "2026-2027"). */
+	function academicYear() {
+		var d = new Date();
+		var start = d.getMonth() >= 7 ? d.getFullYear() : d.getFullYear() - 1;
+		return start + "-" + (start + 1);
+	}
+
+	function termNames() {
+		var ay = academicYear();
+		return TERM_NAMES.map(function (n) { return n + " " + ay; });
+	}
 	var STANDING_RANK = { "": 0, "Dean's Lister": 1, "College Scholar": 2, "University Scholar": 3 };
 	var HONORS = [
 		{ name: "Dean's Lister", max: 2.0 },
@@ -441,8 +453,11 @@
 
 	function suggestTermName() {
 		var used = state.terms.map(function (t) { return t.name; });
-		for (var i = 0; i < TERM_NAMES.length; i++) {
-			if (used.indexOf(TERM_NAMES[i]) < 0) return TERM_NAMES[i];
+		// "1st Semester" and "1st Semester 2026-2027" count as the same one.
+		used = used.map(function (n) { return n.replace(/\s+\d{4}-\d{4}$/, "").toLowerCase(); });
+		var names = termNames();
+		for (var i = 0; i < names.length; i++) {
+			if (used.indexOf(TERM_NAMES[i].toLowerCase()) < 0) return names[i];
 		}
 		return "Semester " + (state.terms.length + 1);
 	}
@@ -467,7 +482,8 @@
 		els.termDelete.textContent = isNew ? "Cancel" : "Delete";
 		els.termSheet.classList.toggle("is-single", state.terms.length < 2);
 		els.termSuggest.textContent = "";
-		TERM_NAMES.forEach(function (name) {
+		els.termName.placeholder = "e.g. " + termNames()[0];
+		termNames().forEach(function (name) {
 			var b = el("button", "suggest-chip", name);
 			b.type = "button";
 			b.addEventListener("click", function () {
@@ -1075,7 +1091,7 @@
 	var importTarget = null; // { id } of a semester, or { name } of a new one
 	var importDetected = null;
 
-	/* "1ST SEMESTER 2025-2026" on the screenshot -> "1st Semester 2025-2026". */
+	/* "1ST SEMESTER 2026-2027" on the screenshot -> "1st Semester 2026-2027". */
 	function detectSemester(text) {
 		var t = String(text || "").toUpperCase();
 		var name = null;
@@ -1096,11 +1112,10 @@
 		if (!found) return { id: state.active };
 		var exact = state.terms.filter(function (t) { return sameName(t.name, found.full); })[0];
 		if (exact) return { id: exact.id };
-		// "1st Semester" without a year: the same semester, unless it already has subjects of its own.
-		var base = state.terms.filter(function (t) { return sameName(t.name, found.base) && t.rows.length === 0; })[0];
+		// A semester named without a year ("1st Semester") is taken to be the same one;
+		// it gets the year from the screenshot when the subjects are added.
+		var base = state.terms.filter(function (t) { return sameName(t.name, found.base); })[0];
 		if (base) return { id: base.id };
-		var active = cur();
-		if (active.rows.length === 0 && /^Semester \d+$|^1st Semester$|^2nd Semester$|^Midyear$/.test(active.name) && sameName(active.name, found.base)) return { id: active.id };
 		return { name: found.full };
 	}
 
@@ -1353,6 +1368,8 @@
 			state.terms.push(term);
 		}
 		var wasActive = state.active;
+		var oldName = term.name;
+		if (!created && importDetected && sameName(term.name, importDetected.base)) term.name = importDetected.full;
 		state.active = term.id;
 		var previous = term.rows.map(function (r) {
 			return { id: r.id, name: r.name, grades: r.grades, units: r.units };
@@ -1387,6 +1404,7 @@
 		if (created) parts[parts.length - 1] += " to " + created.name;
 		showToast(parts.join(", "), function () {
 			term.rows = previous;
+			term.name = oldName;
 			if (created) state.terms = state.terms.filter(function (t) { return t !== created; });
 			state.active = wasActive;
 			if (!findTerm(state.active)) state.active = state.terms[0].id;
