@@ -163,10 +163,10 @@
 
 	/* Black text on white with table borders removed (they confuse the reader:
 	   a "|" next to "COMSCI" becomes "ICOMSCI"). Also finds the table grid. */
-	function prepare(img) {
+	function prepare(img, maxPixels) {
 		// Enlarge small screenshots, shrink big ones; also cap the total size
 		// (phone browsers refuse canvases much over ~16 million pixels).
-		var scale = Math.min(3, TARGET_WIDTH / img.width, Math.sqrt(12e6 / (img.width * img.height)));
+		var scale = Math.min(3, TARGET_WIDTH / img.width, Math.sqrt((maxPixels || 12e6) / (img.width * img.height)));
 		var W = Math.max(1, Math.round(img.width * scale));
 		var H = Math.max(1, Math.round(img.height * scale));
 		var canvas = document.createElement("canvas");
@@ -328,6 +328,8 @@
 			sctx.putImageData(img, 0, 0);
 			var pad = 24;
 			var k = kind === "gray2" ? scale * 1.6 : scale;
+			// Keep each cell picture small enough for the reader's memory (Safari).
+			k = Math.min(k, Math.sqrt(2.5e6 / Math.max(1, w * h)));
 			var c = document.createElement("canvas");
 			c.width = Math.round(w * k) + pad * 2;
 			c.height = Math.round(h * k) + pad * 2;
@@ -452,12 +454,18 @@
 	var UNIT_CANDIDATES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (u) { return { value: u, text: String(u) }; });
 	var GRADE_CANDIDATES = ["1.00", "1.25", "1.50", "1.75", "2.00", "2.25", "2.50", "2.75", "3.00", "4.00", "5.00"].map(function (g) { return { value: parseFloat(g), text: g }; });
 
-	/* Use the shape check when it is confident; otherwise keep the reader's value. */
-	async function confirmNumber(cell, value, candidates) {
+	/* Use the shape check when it is confident; otherwise keep the reader's value.
+	   When the readings all agreed (strong), the shape must be very sure to win. */
+	async function confirmNumber(cell, value, candidates, strong) {
 		var s = await shapeRead(cell, candidates);
-		if (!s) return value;
-		if (s.score >= 0.7 && s.margin >= 0.05) return s.value;
+		if (!s || s.value === value) return value;
+		if (strong ? s.score >= 0.85 && s.margin >= 0.1 : s.score >= 0.7 && s.margin >= 0.05) return s.value;
 		return value;
+	}
+
+	/* All readings of the cell agreed (at least two of them). */
+	function unanimous(res) {
+		return !!(res && res.best && res.best.count >= 2 && res.best.count === res.accepted);
 	}
 
 	function toGrade(token) {
@@ -576,7 +584,7 @@
 			if (!best || v.count > best.count || (v.count === best.count && v.conf > best.conf)) best = v;
 		});
 		if (window.GCALC_DEBUG) console.log("cell " + JSON.stringify(raw) + " -> " + (best ? JSON.stringify(best.value) : "none"));
-		return { best: best, raw: raw };
+		return { best: best, raw: raw, accepted: accepted };
 	}
 
 	/* Reads a subject cell. Each reading votes separately for the letters and for
@@ -672,7 +680,7 @@
 						if (su && su.score >= 0.8 && su.margin >= 0.06) u1 = { best: { value: su.value }, raw: u1.raw };
 					}
 					if (u1.best) {
-						units = await confirmNumber(cell, u1.best.value, UNIT_CANDIDATES);
+						units = await confirmNumber(cell, u1.best.value, UNIT_CANDIDATES, unanimous(u1));
 						phase = "grade";
 					} else {
 						var asGrade = u1.raw.map(gradeFromText).filter(Boolean)[0];
@@ -685,14 +693,16 @@
 					}
 				} else {
 					var g1 = await bestRead(worker, cell, ["7"], function (t) { return hasWords(t) ? 0 : gradeFromText(t); });
+					var gStrong = unanimous(g1);
 					if (g1.best) {
 						grade = g1.best.value;
 					} else if (!g1.raw.some(hasWords)) {
 						// No words in the cell, so it should be a number: read digits only.
 						var g2 = await bestRead(worker, cell, ["7", "8"], gradeFromText, "0123456789.,");
 						if (g2.best) grade = g2.best.value;
+						gStrong = unanimous(g2);
 					}
-					if (grade) grade = await confirmNumber(cell, grade, GRADE_CANDIDATES);
+					if (grade) grade = await confirmNumber(cell, grade, GRADE_CANDIDATES, gStrong);
 					break; // first cell after units is the grade (or "NOT YET")
 				}
 			}
@@ -1028,7 +1038,7 @@
 						if (u1.best) u = u1.best.value;
 					}
 					if (u) {
-						units = await confirmNumber(cell, u, UNIT_CANDIDATES);
+						units = await confirmNumber(cell, u, UNIT_CANDIDATES, true);
 						phase = "grade";
 					} else {
 						if (gradeFromText(text) && !hasWords(text)) {
@@ -1047,7 +1057,7 @@
 							if (!g1.best && !g1.raw.some(hasWords)) g1 = await bestRead(gw, cell, ["7", "8"], gradeFromText, "0123456789.,");
 							if (g1.best) grade = g1.best.value;
 						}
-						if (grade) grade = await confirmNumber(cell, grade, GRADE_CANDIDATES);
+						if (grade) grade = await confirmNumber(cell, grade, GRADE_CANDIDATES, true);
 					}
 					break; // first cell after units is the grade (or "NOT YET")
 				}
@@ -1145,7 +1155,22 @@
 			report(0.25, "Reading text");
 
 			if (prep.grid) {
-				var tableRows = await readTable(worker, prep, report);
+				var tableRows;
+				try {
+					tableRows = await readTable(worker, prep, report);
+				} catch (err) {
+					// Safari can run the reader out of memory on very tall screenshots:
+					// start a fresh reader on a smaller copy and try once more.
+					if (!/memory|bounds|abort/i.test(String(err && err.message))) throw err;
+					worker.terminate();
+					worker = await T.createWorker("eng", 1, {
+						workerPath: BASE + "worker.min.js", corePath: BASE + "core", langPath: BASE + "lang",
+						gzip: false, cacheMethod: "none", workerBlobURL: false
+					});
+					await worker.setParameters({ preserve_interword_spaces: "1", tessedit_char_whitelist: WHITELIST });
+					prep = prepare(loaded[1], 5e6);
+					tableRows = prep.grid ? await readTable(worker, prep, report) : [];
+				}
 				if (tableRows.length) {
 					report(1, "Done");
 					return { rows: tableRows, mode: "table" };

@@ -86,6 +86,20 @@ function score(item, rows) {
 	}
 	process.stdout.write("\n");
 	fails.forEach((f) => console.log(`FAIL ${f.file} [${f.mode}]: ${f.problems.join("; ")}`));
+	// Read the first few failures again with the reader's debug log on.
+	for (const f of fails.slice(0, 6)) {
+		const lines = [];
+		const onLog = (m) => { const t = m.text(); if (/^(cell|subject|shape) /.test(t)) lines.push(t.slice(0, 160)); };
+		page.on("console", onLog);
+		try {
+			await page.evaluate(async (url) => {
+				window.GCALC_DEBUG = true;
+				try { await window.GCalcOCR.read(await (await fetch(url)).blob()); } finally { window.GCALC_DEBUG = false; }
+			}, base + "/corpus/" + f.file);
+		} catch (e) { lines.push("error " + e.message.slice(0, 120)); }
+		page.off("console", onLog);
+		console.log(`DEBUG ${f.file}:\n  ` + lines.join("\n  "));
+	}
 	const avg = Math.round(times.reduce((a, b) => a + b, 0) / Math.max(1, times.length));
 	console.log(`${engine}: ${pass}/${expected.length} screenshots fully correct, avg ${avg}ms`);
 	if (errors.length) console.log("page errors:", errors.slice(0, 5));
