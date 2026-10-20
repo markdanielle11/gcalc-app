@@ -12,20 +12,20 @@ adb shell am start -n com.gcalc.gwa/.MainActivity --ez selftest true
 
 # Up to 20 minutes for the corpus
 for _ in $(seq 1 600); do
-  if adb logcat -d -s GCalc:I | grep -q "GCALC_DONE"; then break; fi
+  if grep -q "GCALC_DONE" <<< "$(adb logcat -d -s GCalc:I)"; then break; fi
   sleep 2
 done
 LOG="$(adb logcat -d -s GCalc:I)"
 echo "----- app log -----"
-echo "$LOG" | grep -E "GCALC_" | tail -80
+grep -E "GCALC_" <<< "$LOG" | tail -80 || true
 
 # Results as GitHub annotations (readable without the full log)
-echo "$LOG" | grep -o 'GCALC_CASE.*' | while IFS= read -r l; do echo "::notice title=OCR case::$l"; done
-echo "$LOG" | grep -o 'GCALC_CORPUS_FAIL.*' | head -25 | while IFS= read -r l; do echo "::warning title=AI corpus::$l"; done
-CORPUS="$(echo "$LOG" | grep -o 'GCALC_CORPUS .*' | tail -1 || true)"
+{ grep -o 'GCALC_CASE.*' <<< "$LOG" || true; } | while IFS= read -r l; do echo "::notice title=OCR case::$l"; done
+{ grep -o 'GCALC_CORPUS_FAIL.*' <<< "$LOG" || true; } | sed -n '1,25p' | while IFS= read -r l; do echo "::warning title=AI corpus::$l"; done
+CORPUS="$({ grep -o 'GCALC_CORPUS .*' <<< "$LOG" || true; } | tail -1)"
 echo "::notice title=AI corpus::${CORPUS:-no corpus result}"
-RESULT="$(echo "$LOG" | grep -o 'GCALC_SELFTEST.*' | tail -1 || true)"
-if echo "$RESULT" | grep -q "GCALC_SELFTEST PASS"; then
+RESULT="$({ grep -o 'GCALC_SELFTEST.*' <<< "$LOG" || true; } | tail -1)"
+if grep -q "GCALC_SELFTEST PASS" <<< "$RESULT"; then
   echo "::notice title=OCR self-test::${RESULT}"
 else
   echo "::error title=OCR self-test::${RESULT:-no result within timeout}"
@@ -37,4 +37,4 @@ adb shell am start -n com.gcalc.gwa/.MainActivity
 sleep 8
 adb exec-out screencap -p > android-screen.png || true
 
-echo "$RESULT" | grep -q "GCALC_SELFTEST PASS"
+grep -q "GCALC_SELFTEST PASS" <<< "$RESULT"

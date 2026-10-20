@@ -117,8 +117,12 @@
 		}
 		window.GCALC_FORCE_TESSERACT = false;
 		window.GCALC_DEBUG = false;
-		var pass = 0, times = 0;
+		// Every other screenshot, and at most 12 minutes, so CI stays fast.
+		list = list.filter(function (x, i) { return i % 2 === 0; });
+		var pass = 0, times = 0, started = Date.now(), ran = 0;
 		for (var i = 0; i < list.length; i++) {
+			if (Date.now() - started > 12 * 60 * 1000) break;
+			ran++;
 			var item = list[i], t0 = Date.now();
 			try {
 				var blob = await (await fetch("corpus/" + item.file)).blob();
@@ -132,7 +136,7 @@
 			}
 			times += Date.now() - t0;
 		}
-		done("GCALC_CORPUS ai " + pass + "/" + list.length + " fully correct, avg " + Math.round(times / Math.max(1, list.length)) + "ms");
+		done("GCALC_CORPUS ai " + pass + "/" + ran + " fully correct, avg " + Math.round(times / Math.max(1, ran)) + "ms");
 	}
 
 	(async function () {

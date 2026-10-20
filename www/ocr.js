@@ -589,6 +589,11 @@
 			}
 		}
 
+		return finalizeRows(rows, prep);
+	}
+
+	/* Keeps only rows that belong to the grades table. */
+	function finalizeRows(rows, prep) {
 		// Real subjects all sit in the same column. Anything found elsewhere
 		// (a "1ST SEMESTER 2026-2027" box above the table, say) is dropped.
 		var votes = {};
@@ -759,27 +764,186 @@
 		}
 	}
 
+	function readNativeBase64(base64) {
+		return new Promise(function (resolve, reject) {
+			var id = "r" + Date.now() + Math.random().toString(36).slice(2);
+			var timer = setTimeout(function () {
+				if (nativeCalls[id]) {
+					delete nativeCalls[id];
+					reject(new Error("Text recognition timed out."));
+				}
+			}, 30000);
+			nativeCalls[id] = {
+				resolve: function (v) { clearTimeout(timer); resolve(v); },
+				reject: function (e) { clearTimeout(timer); reject(e); }
+			};
+			window.GCalcAndroid.recognizeText(id, base64);
+		});
+	}
+
 	function readNative(file) {
 		return new Promise(function (resolve, reject) {
 			var fr = new FileReader();
 			fr.onerror = function () { reject(new Error("Could not open the image.")); };
 			fr.onload = function () {
-				var id = "r" + Date.now() + Math.random().toString(36).slice(2);
-				var timer = setTimeout(function () {
-					if (nativeCalls[id]) {
-						delete nativeCalls[id];
-						reject(new Error("Text recognition timed out."));
-					}
-				}, 30000);
-				nativeCalls[id] = {
-					resolve: function (v) { clearTimeout(timer); resolve(v); },
-					reject: function (e) { clearTimeout(timer); reject(e); }
-				};
-				var base64 = String(fr.result).split(",")[1] || "";
-				window.GCalcAndroid.recognizeText(id, base64);
+				readNativeBase64(String(fr.result).split(",")[1] || "").then(resolve, reject);
 			};
 			fr.readAsDataURL(file);
 		});
+	}
+
+	/* The prepared screenshot in grayscale with the table lines removed: what the
+	   AI reader sees in table mode (lines make it glue "|" onto codes, "ISTAT"). */
+	function grayCanvas(prep) {
+		var c = document.createElement("canvas");
+		c.width = prep.W;
+		c.height = prep.H;
+		var ctx = c.getContext("2d");
+		var img = ctx.createImageData(prep.W, prep.H);
+		var d = img.data, g = prep.gray;
+		for (var i = 0, n = prep.W * prep.H; i < n; i++) {
+			d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = g[i];
+			d[i * 4 + 3] = 255;
+		}
+		ctx.putImageData(img, 0, 0);
+		return c;
+	}
+
+	/* ---------- AI table mode: the AI reads the page, the grid says which cell
+	   each word belongs to. Cells whose text doesn't make sense (a units cell
+	   that isn't 1-10, a grade that isn't a real grade) are read again with
+	   Tesseract. ---------- */
+
+	function bandIndex(bands, v) {
+		for (var i = 0; i < bands.length; i++) if (v >= bands[i][0] - 2 && v <= bands[i][1] + 2) return i;
+		return -1;
+	}
+
+	/* Puts every word into its cell. A word that runs across a column line
+	   ("31.25" for "3" and "1.25" side by side) is split at the line. */
+	function wordsByCell(prep, layout) {
+		var grid = prep.grid;
+		var k = prep.W / (layout.width || prep.W);
+		var cells = {};
+		function add(r, c, text, box) {
+			var key = r + "," + c;
+			(cells[key] = cells[key] || []).push({ text: text, box: box });
+		}
+		(layout.lines || []).forEach(function (line) {
+			(line.elements && line.elements.length ? line.elements : [line]).forEach(function (e) {
+				if (!e.text || !e.box) return;
+				var box = e.box.map(function (v) { return v * k; });
+				var r = bandIndex(grid.rows, (box[1] + box[3]) / 2);
+				if (r < 0) return;
+				var text = e.text.trim();
+				var per = (box[2] - box[0]) / Math.max(1, text.length);
+				var parts = {};
+				for (var i = 0; i < text.length; i++) {
+					var c = bandIndex(grid.cols, box[0] + per * (i + 0.5));
+					if (c < 0) continue;
+					var part = parts[c] || (parts[c] = { text: "", x0: box[0] + per * i, x1: 0 });
+					part.text += text[i];
+					part.x1 = box[0] + per * (i + 1);
+				}
+				Object.keys(parts).forEach(function (c) {
+					var part = parts[c];
+					if (part.text.trim()) add(r, Number(c), part.text.trim(), [part.x0, box[1], part.x1, box[3]]);
+				});
+			});
+		});
+		return function cellText(r, c) {
+			var words = (cells[r + "," + c] || []).slice().sort(function (a, b) { return a.box[1] - b.box[1]; });
+			var lines = [];
+			words.forEach(function (w) {
+				var line = lines[lines.length - 1];
+				var h = w.box[3] - w.box[1];
+				if (line && Math.abs(w.box[1] - line.top) < h * 0.5) line.words.push(w);
+				else lines.push({ top: w.box[1], words: [w] });
+			});
+			return lines.map(function (l) {
+				return l.words.sort(function (a, b) { return a.box[0] - b.box[0]; }).map(function (w) { return w.text; }).join(" ");
+			}).join(" ").trim();
+		};
+	}
+
+	async function readTableAI(prep, layout, getTesseract, report) {
+		var grid = prep.grid;
+		var cellText = wordsByCell(prep, layout);
+		var rows = [];
+		var seen = {};
+		for (var r = 0; r < grid.rows.length; r++) {
+			report(0.45 + 0.5 * (r / grid.rows.length), "Checking row " + (r + 1) + " of " + grid.rows.length);
+			var band = grid.rows[r];
+			var name = null, units = 0, grade = 0, nameCol = -1;
+			var phase = "subject", tried = 0;
+
+			for (var c = 0; c < grid.cols.length; c++) {
+				var col = grid.cols[c];
+				var cell = cropCell(prep, col[0], band[0], col[1], band[1]);
+				var text = cellText(r, c);
+				if (!cell && !text) continue;
+
+				if (phase === "subject") {
+					if (++tried > 3) break; // no code in the first cells: not a subject row
+					var m = matchCode(text) || matchCode(text.toUpperCase().replace(/[^A-Z0-9& ]/g, ""));
+					if (m && m.index <= 3) {
+						name = m.name;
+					} else if (cell && /[A-Za-z]{2}/.test(text) && /\d/.test(text)) {
+						// Looks like a code the AI garbled: let Tesseract try this cell.
+						name = await readSubject(await getTesseract(), cell);
+					}
+					if (name) {
+						nameCol = c;
+						phase = "units";
+					}
+				} else if (phase === "units") {
+					var u = hasWords(text) ? 0 : toUnits(lookalikeDigits(text.replace(/\s+/g, "")));
+					if (!u && cell && !hasWords(text) && !gradeFromText(text)) {
+						// Empty to the AI, or not 1-10: read the lone digit with Tesseract.
+						var tw = await getTesseract();
+						var u1 = await bestRead(tw, cell, ["8", "10"], toUnits, "0123456789.");
+						if (!u1.best) u1 = await bestRead(tw, cell, ["10", "8"], function (t) { return hasWords(t) ? 0 : toUnits(lookalikeDigits(t.trim())); });
+						if (u1.best) u = u1.best.value;
+					}
+					if (u) {
+						units = u;
+						phase = "grade";
+					} else {
+						if (gradeFromText(text) && !hasWords(text)) {
+							grade = gradeFromText(text);
+							break;
+						}
+						phase = "grade";
+						c--; // this cell may be the grade column; look at it again
+					}
+				} else {
+					if (!hasWords(text)) {
+						grade = gradeFromText(text);
+						if (!grade && cell) {
+							var gw = await getTesseract();
+							var g1 = await bestRead(gw, cell, ["7"], function (t) { return hasWords(t) ? 0 : gradeFromText(t); });
+							if (!g1.best && !g1.raw.some(hasWords)) g1 = await bestRead(gw, cell, ["7", "8"], gradeFromText, "0123456789.,");
+							if (g1.best) grade = g1.best.value;
+						}
+					}
+					break; // first cell after units is the grade (or "NOT YET")
+				}
+			}
+
+			if (name) {
+				var key = name.replace(/\s+/g, "");
+				if (!seen[key]) {
+					seen[key] = true;
+					var row = makeRow(name, units, grade);
+					row.col = nameCol;
+					row.extent = band.extent || [0, prep.W];
+					row.extentBelow = band.extentBelow || row.extent;
+					row.height = band[1] - band[0];
+					rows.push(row);
+				}
+			}
+		}
+		return finalizeRows(rows, prep);
 	}
 
 	/**
@@ -794,6 +958,35 @@
 
 		// Android app: Google's on-device text recognition is the most accurate.
 		if (hasNativeReader() && !window.GCALC_FORCE_TESSERACT) {
+			var aiWorker = null;
+			try {
+				var aiImg = await loadImage(file);
+				var aiPrep = prepare(aiImg);
+				if (aiPrep.grid) {
+					report(0.25, "Reading text");
+					var gridLayout = await readNativeBase64(grayCanvas(aiPrep).toDataURL("image/png").split(",")[1]);
+					var getTesseract = async function () {
+						if (!aiWorker) {
+							var T0 = await loadLibrary();
+							aiWorker = await T0.createWorker("eng", 1, {
+								workerPath: BASE + "worker.min.js", corePath: BASE + "core", langPath: BASE + "lang",
+								gzip: false, cacheMethod: "none", workerBlobURL: false
+							});
+							await aiWorker.setParameters({ preserve_interword_spaces: "1", tessedit_char_whitelist: WHITELIST });
+						}
+						return aiWorker;
+					};
+					var tableRows = await readTableAI(aiPrep, gridLayout, getTesseract, report);
+					if (tableRows.length) {
+						report(1, "Done");
+						return { rows: tableRows, mode: "ai", layout: window.GCALC_DEBUG ? gridLayout : undefined };
+					}
+				}
+			} catch (e) {
+				if (window.GCALC_DEBUG) console.log("AI table mode failed: " + e.message);
+			} finally {
+				if (aiWorker) aiWorker.terminate();
+			}
 			try {
 				report(0.3, "Reading text");
 				var layout = await readNative(file);
