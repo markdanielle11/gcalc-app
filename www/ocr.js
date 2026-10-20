@@ -1,12 +1,26 @@
 /* GCalc screenshot import.
    Reads a photo or screenshot of a grades table on the device (Tesseract.js,
-   fully offline) and turns it into subjects: code, units and grade. */
+   fully offline) and turns it into subjects: code, units and grade.
+
+   Two ways of reading:
+   1. Table mode (preferred): when the image has a ruled table (like the CLSU
+      portal), the grid lines are found and each cell is read on its own, so a
+      code split over two lines ("INTECH" / "3100") and a lone "3" in the units
+      column are still read correctly.
+   2. Line mode (fallback): the whole image is read as text and each line that
+      has a subject code is parsed. */
 (function () {
 	"use strict";
 
 	var BASE = "vendor/tesseract/";
 	var VALID_GRADES = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 4, 5];
 	var TARGET_WIDTH = 2000;
+	var WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-& ";
+
+	// Subject codes are written in capitals: INTECH 3100, GEC 104, PE 3, NSTP 12.
+	// The code may be split over two lines inside a narrow cell.
+	var CODE = /\b([A-Z][A-Z&]{1,11})\s*-?\s*(\d{1,4}[A-Z]?)\b/;
+	var NOT_A_SUBJECT = /^(NO|SY|AY|ST|ND|RD|SEM|SEMESTER|YEAR|PAGE|ROOM|SECTION|TOTAL|GWA|UNITS|GRADE|GRADES|REMARKS|STATUS|SUBJECTS|SUBJECT|PASSED|FAILED|SUBMITTED|APPROVED|YET|NOT|PM|AM)$/;
 
 	var libPromise = null;
 
@@ -65,8 +79,59 @@
 		return threshold;
 	}
 
-	/* Black text on white, table borders removed. Borders confuse the reader
-	   (a "|" next to "COMSCI" becomes "ICOMSCI"). */
+	/* Groups positions whose count is high into lines: [[start, end], ...]. */
+	function findLines(counts, minCount) {
+		var max = 0, i;
+		for (i = 0; i < counts.length; i++) if (counts[i] > max) max = counts[i];
+		if (max < minCount) return [];
+		var thr = Math.max(minCount, max * 0.35);
+		var lines = [];
+		var start = -1, last = -10;
+		for (i = 0; i < counts.length; i++) {
+			if (counts[i] >= thr) {
+				if (start < 0 || i - last > 4) {
+					if (start >= 0) lines.push([start, last]);
+					start = i;
+				}
+				last = i;
+			}
+		}
+		if (start >= 0) lines.push([start, last]);
+		return lines;
+	}
+
+	/* The space between consecutive lines. */
+	function bandsBetween(lines, minSize) {
+		var bands = [];
+		for (var i = 0; i + 1 < lines.length; i++) {
+			var a = lines[i][1] + 3, b = lines[i + 1][0] - 3;
+			if (b - a >= minSize) {
+				var band = [a, b];
+				band.extent = lines[i].extent; // left/right ends of the line above
+				bands.push(band);
+			}
+		}
+		return bands;
+	}
+
+	/* Left and right ends of each horizontal line. */
+	function addExtents(lines, eraseH, W) {
+		lines.forEach(function (line) {
+			var left = W, right = 0;
+			for (var y = line[0]; y <= line[1]; y++) {
+				for (var x = 0; x < W; x++) {
+					if (eraseH[y * W + x]) {
+						if (x < left) left = x;
+						if (x > right) right = x;
+					}
+				}
+			}
+			line.extent = [left, right];
+		});
+	}
+
+	/* Black text on white with table borders removed (they confuse the reader:
+	   a "|" next to "COMSCI" becomes "ICOMSCI"). Also finds the table grid. */
 	function prepare(img) {
 		var scale = Math.min(3, TARGET_WIDTH / img.width);
 		var W = Math.max(1, Math.round(img.width * scale));
@@ -95,18 +160,24 @@
 		var ink = new Uint8Array(n);
 		for (var p = 0; p < n; p++) ink[p] = gray[p] < threshold ? 1 : 0;
 
-		var erase = new Uint8Array(n);
 		// Only runs much longer than any letter stroke count as table lines,
 		// otherwise the stems of letters like I, L and T get erased too.
 		var minH = Math.max(60, W * 0.08);
 		var minV = Math.max(60, W * 0.06, H * 0.05);
+		var eraseH = new Uint8Array(n);
+		var eraseV = new Uint8Array(n);
+		var hCount = new Uint32Array(H);
+		var vCount = new Uint32Array(W);
 		var x, y, run, k;
 		for (y = 0; y < H; y++) {
 			run = 0;
 			for (x = 0; x <= W; x++) {
 				if (x < W && ink[y * W + x]) run++;
 				else {
-					if (run >= minH) for (k = x - run; k < x; k++) erase[y * W + k] = 1;
+					if (run >= minH) {
+						for (k = x - run; k < x; k++) eraseH[y * W + k] = 1;
+						hCount[y] += run;
+					}
 					run = 0;
 				}
 			}
@@ -116,18 +187,79 @@
 			for (y = 0; y <= H; y++) {
 				if (y < H && ink[y * W + x]) run++;
 				else {
-					if (run >= minV) for (k = y - run; k < y; k++) erase[k * W + x] = 1;
+					if (run >= minV) {
+						for (k = y - run; k < y; k++) eraseV[k * W + x] = 1;
+						vCount[x] += run;
+					}
 					run = 0;
 				}
 			}
 		}
+
+		var clean = new Uint8Array(n); // 1 = text ink
 		for (var q = 0; q < n; q++) {
-			var v = ink[q] && !erase[q] ? 0 : 255;
+			var isText = ink[q] && !eraseH[q] && !eraseV[q];
+			clean[q] = isText ? 1 : 0;
+			var v = isText ? 0 : 255;
 			px[q * 4] = px[q * 4 + 1] = px[q * 4 + 2] = v;
 			px[q * 4 + 3] = 255;
 		}
 		ctx.putImageData(data, 0, 0);
-		return canvas;
+
+		var rowLines = findLines(hCount, W * 0.25);
+		addExtents(rowLines, eraseH, W);
+		var colLines = findLines(vCount, H * 0.08);
+		var grid = null;
+		if (rowLines.length >= 3 && colLines.length >= 4) {
+			grid = {
+				rows: bandsBetween(rowLines, 18),
+				cols: bandsBetween(colLines, 18)
+			};
+			if (grid.rows.length < 2 || grid.cols.length < 3) grid = null;
+		}
+
+		return { canvas: canvas, clean: clean, W: W, H: H, grid: grid };
+	}
+
+	/* Copies one cell (text only) onto a small white canvas with a margin. */
+	function cropCell(prep, x0, y0, x1, y1) {
+		var W = prep.W, clean = prep.clean;
+		var minX = x1, minY = y1, maxX = x0, maxY = y0, count = 0;
+		for (var y = y0; y <= y1; y++) {
+			for (var x = x0; x <= x1; x++) {
+				if (clean[y * W + x]) {
+					count++;
+					if (x < minX) minX = x;
+					if (x > maxX) maxX = x;
+					if (y < minY) minY = y;
+					if (y > maxY) maxY = y;
+				}
+			}
+		}
+		if (count < 25 || maxX - minX < 4 || maxY - minY < 8) return null; // empty cell
+
+		var pad = 20;
+		var w = maxX - minX + 1, h = maxY - minY + 1;
+		var c = document.createElement("canvas");
+		c.width = w + pad * 2;
+		c.height = h + pad * 2;
+		var ctx = c.getContext("2d");
+		var img = ctx.createImageData(c.width, c.height);
+		var d = img.data;
+		for (var i = 0; i < d.length; i += 4) {
+			d[i] = d[i + 1] = d[i + 2] = 255;
+			d[i + 3] = 255;
+		}
+		for (var yy = 0; yy < h; yy++) {
+			for (var xx = 0; xx < w; xx++) {
+				if (clean[(minY + yy) * W + (minX + xx)]) {
+					var o = ((yy + pad) * c.width + (xx + pad)) * 4;
+					d[o] = d[o + 1] = d[o + 2] = 0;
+				}
+			}
+		}
+		ctx.putImageData(img, 0, 0);
+		return c;
 	}
 
 	function toGrade(token) {
@@ -137,84 +269,214 @@
 		return VALID_GRADES.indexOf(g) >= 0 ? g : 0;
 	}
 
+	// Digits the reader commonly mixes up with each other.
+	var LOOKALIKE = { "1": "74", "7": "12", "5": "63", "6": "508", "0": "896", "8": "0369", "3": "85", "2": "7", "4": "1", "9": "08" };
+	var GRADE_TEXT = ["1.00", "1.25", "1.50", "1.75", "2.00", "2.25", "2.50", "2.75", "3.00", "4.00", "5.00"];
+
+	/* "2.15" is not a grade, but a 7 read as a 1 is a common mistake: -> 2.75.
+	   Only fixes a single lookalike digit, and only when exactly one grade fits. */
+	function fixGrade(token) {
+		if (!/^\d\.\d{2}$/.test(token)) return 0;
+		if (toGrade(token)) return toGrade(token);
+		var fits = GRADE_TEXT.filter(function (g) {
+			var diff = 0;
+			for (var i = 0; i < 4; i++) {
+				if (g[i] === token[i]) continue;
+				if ((LOOKALIKE[token[i]] || "").indexOf(g[i]) < 0) return false;
+				diff++;
+			}
+			return diff === 1;
+		});
+		return fits.length === 1 ? parseFloat(fits[0]) : 0;
+	}
+
 	function toUnits(token) {
 		if (!/^\d{1,2}(\.0)?$/.test(token)) return 0;
 		var u = Math.round(parseFloat(token));
 		return u >= 1 && u <= 10 ? u : 0;
 	}
 
-	/* "7  PHILI 1100   3   1.00   PASSED" -> { name: "PHILI 1100", units: 3, grades: 1 } */
+	function matchCode(text) {
+		var m = CODE.exec(text);
+		if (!m || NOT_A_SUBJECT.test(m[1])) return null;
+		return { name: m[1] + " " + m[2].toUpperCase(), index: m.index, length: m[0].length };
+	}
+
+	function makeRow(name, units, grade) {
+		return { name: name.slice(0, 40), units: units || 3, grades: grade || 0, unitsFound: units > 0 };
+	}
+
+	/* Line mode: "7  PHILI 1100   3   1.00   PASSED" -> { name: "PHILI 1100", units: 3, grades: 1 } */
 	function parse(text) {
-		// Subject codes are written in capitals: INTECH 3100, GEC 104, PE 3, NSTP 12.
-		var CODE = /\b([A-Z][A-Z&]{1,11})\s?-?\s?(\d{1,4}[A-Z]?)\b/;
 		var seen = {};
 		var rows = [];
 		text.split(/\r?\n/).forEach(function (line) {
-			var m = CODE.exec(line);
+			var m = matchCode(line);
 			if (!m) return;
-			var prefix = m[1];
-			if (/^(NO|SY|AY|SEM|YEAR|PAGE|ROOM|SECTION|TOTAL|GWA|UNITS|GRADE|GRADES|REMARKS|STATUS|SUBJECTS|PASSED|FAILED|SUBMITTED|APPROVED|YET|NOT)$/.test(prefix)) return;
-			var name = prefix + " " + m[2].toUpperCase();
-			var rest = line.slice(m.index + m[0].length);
+			var rest = line.slice(m.index + m.length);
 			var tokens = rest.match(/\d+(?:\.\d+)?/g) || [];
 			var units = 0, grade = 0;
 			tokens.forEach(function (t) {
 				if (!grade && toGrade(t)) grade = toGrade(t);
 				else if (!units && toUnits(t)) units = toUnits(t);
 			});
-			var key = name.replace(/\s+/g, "");
+			var key = m.name.replace(/\s+/g, "");
 			if (seen[key]) return;
 			seen[key] = true;
-			rows.push({ name: name.slice(0, 40), units: units || 3, grades: grade, unitsFound: units > 0 });
+			rows.push(makeRow(m.name, units, grade));
 		});
 		return rows;
+	}
+
+	async function recognizeCell(worker, canvas, psm) {
+		await worker.setParameters({ tessedit_pageseg_mode: psm });
+		var r = await worker.recognize(canvas);
+		return (r.data.text || "").replace(/\s+/g, " ").trim();
+	}
+
+	/* Table mode: walk each row's cells left to right: [No.] Subject, Units, Grade, ... */
+	async function readTable(worker, prep, report) {
+		var grid = prep.grid;
+		var rows = [];
+		var seen = {};
+		for (var r = 0; r < grid.rows.length; r++) {
+			report(0.3 + 0.65 * (r / grid.rows.length), "Reading row " + (r + 1) + " of " + grid.rows.length);
+			var band = grid.rows[r];
+			var name = null, units = 0, grade = 0, nameCol = -1;
+			var phase = "subject", tried = 0;
+
+			for (var c = 0; c < grid.cols.length; c++) {
+				var col = grid.cols[c];
+				var cell = cropCell(prep, col[0], band[0], col[1], band[1]);
+				if (!cell) continue;
+
+				if (phase === "subject") {
+					if (++tried > 3) break; // no code in the first cells: not a subject row
+					var t = await recognizeCell(worker, cell, "6");
+					var m = matchCode(t);
+					if (m) {
+						name = m.name;
+						nameCol = c;
+						phase = "units";
+					}
+				} else if (phase === "units") {
+					// A lone digit is easy to miss as a block; read it as a single word.
+					var u = await recognizeCell(worker, cell, "8");
+					if (!toUnits(u)) u = await recognizeCell(worker, cell, "10");
+					if (toUnits(u)) {
+						units = toUnits(u);
+						phase = "grade";
+					} else if (toGrade(u)) {
+						grade = toGrade(u);
+						break;
+					} else {
+						phase = "grade";
+						c--; // this cell may be the grade column; look at it again
+						continue;
+					}
+				} else {
+					var gtext = await recognizeCell(worker, cell, "7");
+					var tok = (gtext.match(/\d\.\d{2}/) || [""])[0];
+					grade = fixGrade(tok);
+					if (!grade && !/[A-Za-z]{2}/.test(gtext)) {
+						// No words in the cell, so it should be a number: read digits only.
+						await worker.setParameters({ tessedit_char_whitelist: "0123456789." });
+						var dtext = await recognizeCell(worker, cell, "7");
+						await worker.setParameters({ tessedit_char_whitelist: WHITELIST });
+						grade = fixGrade((dtext.match(/\d\.\d{2}/) || [""])[0]);
+					}
+					break; // first cell after units is the grade (or "NOT YET")
+				}
+			}
+
+			if (name) {
+				var key = name.replace(/\s+/g, "");
+				if (!seen[key]) {
+					seen[key] = true;
+					var row = makeRow(name, units, grade);
+					row.col = nameCol;
+					row.extent = band.extent || [0, prep.W];
+					rows.push(row);
+				}
+			}
+		}
+
+		// Real subjects all sit in the same column. Anything found elsewhere
+		// (a "1ST SEMESTER 2026-2027" box above the table, say) is dropped.
+		var votes = {};
+		rows.forEach(function (r) { votes[r.col] = (votes[r.col] || 0) + 1; });
+		var best = -1, bestVotes = 0;
+		Object.keys(votes).forEach(function (k) {
+			if (votes[k] > bestVotes) {
+				bestVotes = votes[k];
+				best = Number(k);
+			}
+		});
+		rows = rows.filter(function (r) { return r.col === best; });
+
+		// Table rows are bounded by lines of the same length; a box above the
+		// table is not. Keep rows whose line matches the typical (median) one.
+		function median(values) {
+			var v = values.slice().sort(function (a, b) { return a - b; });
+			return v[Math.floor(v.length / 2)];
+		}
+		var midLeft = median(rows.map(function (r) { return r.extent[0]; }));
+		var midRight = median(rows.map(function (r) { return r.extent[1]; }));
+		var tolerance = prep.W * 0.04;
+		return rows.filter(function (r) {
+			return Math.abs(r.extent[0] - midLeft) <= tolerance && Math.abs(r.extent[1] - midRight) <= tolerance;
+		}).map(function (r) {
+			delete r.col;
+			delete r.extent;
+			return r;
+		});
 	}
 
 	/**
 	 * Reads a grades screenshot.
 	 * onProgress(0..1, label) is called while it works.
-	 * Resolves to { rows: [{ name, units, grades, unitsFound }], text }.
+	 * Resolves to { rows: [{ name, units, grades, unitsFound }], mode }.
 	 */
-	function read(file, onProgress) {
+	async function read(file, onProgress) {
 		var report = typeof onProgress === "function" ? onProgress : function () {};
 		var worker = null;
 		report(0.02, "Opening image");
-		return Promise.all([loadLibrary(), loadImage(file)])
-			.then(function (res) {
-				var T = res[0];
-				var canvas = prepare(res[1]);
-				report(0.1, "Starting the reader");
-				return T.createWorker("eng", 1, {
-					workerPath: BASE + "worker.min.js",
-					corePath: BASE + "core",
-					langPath: BASE + "lang",
-					gzip: false,
-					cacheMethod: "none",
-					workerBlobURL: false,
-					logger: function (m) {
-						if (m.status === "recognizing text") report(0.25 + 0.7 * (m.progress || 0), "Reading text");
-						else if (m.status === "loading language traineddata") report(0.15 + 0.1 * (m.progress || 0), "Starting the reader");
-					}
-				}).then(function (w) {
-					worker = w;
-					return w.setParameters({
-						tessedit_pageseg_mode: "6",
-						preserve_interword_spaces: "1",
-						tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-& "
-					});
-				}).then(function () {
-					return worker.recognize(canvas);
-				});
-			})
-			.then(function (result) {
-				report(1, "Done");
-				var text = result.data.text || "";
-				return { rows: parse(text), text: text };
-			})
-			.finally(function () {
-				if (worker) worker.terminate();
+		try {
+			var loaded = await Promise.all([loadLibrary(), loadImage(file)]);
+			var T = loaded[0];
+			var prep = prepare(loaded[1]);
+			report(0.1, "Starting the reader");
+			worker = await T.createWorker("eng", 1, {
+				workerPath: BASE + "worker.min.js",
+				corePath: BASE + "core",
+				langPath: BASE + "lang",
+				gzip: false,
+				cacheMethod: "none",
+				workerBlobURL: false
 			});
+			await worker.setParameters({
+				preserve_interword_spaces: "1",
+				tessedit_char_whitelist: WHITELIST
+			});
+			report(0.25, "Reading text");
+
+			if (prep.grid) {
+				var tableRows = await readTable(worker, prep, report);
+				if (tableRows.length) {
+					report(1, "Done");
+					return { rows: tableRows, mode: "table" };
+				}
+			}
+
+			report(0.5, "Reading text");
+			await worker.setParameters({ tessedit_pageseg_mode: "6" });
+			var result = await worker.recognize(prep.canvas);
+			report(1, "Done");
+			return { rows: parse(result.data.text || ""), mode: "lines" };
+		} finally {
+			if (worker) worker.terminate();
+		}
 	}
 
-	window.GCalcOCR = { read: read, parse: parse };
+	window.GCalcOCR = { read: read, parse: parse, _prepare: prepare };
 })();

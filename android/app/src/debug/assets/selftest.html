@@ -12,28 +12,41 @@
 <script src="ocr.js"></script>
 <script>
 (function () {
+	// Narrow subject column like the portal on a phone: codes wrap onto two lines.
 	var rows = [
-		["1", "INTECH 3100", "3", "1.25", "PASSED"],
-		["2", "STAT 3206", "3", "NOT YET", "NOT YET"],
-		["3", "PHILI 1100", "3", "1.00", "PASSED"],
-		["4", "GEC 104", "2", "2.75", "PASSED"]
+		["1", ["INTECH", "3100"], "3", "1.25", "PASSED"],
+		["2", ["STAT", "3206"], "3", ["NOT YET", "SUBMITTED"], "NOT YET"],
+		["3", ["PHILI", "1100"], "3", "1.00", "PASSED"],
+		["4", ["GEC", "104"], "2", "2.75", "PASSED"],
+		["5", ["COMSCI", "3100"], "3", "1.50", "PASSED"]
 	];
-	var expected = [["INTECH 3100", 3, 1.25], ["STAT 3206", 3, 0], ["PHILI 1100", 3, 1], ["GEC 104", 2, 2.75]];
-	var cols = [20, 110, 420, 540, 700, 880];
+	var expected = [["INTECH 3100", 3, 1.25], ["STAT 3206", 3, 0], ["PHILI 1100", 3, 1], ["GEC 104", 2, 2.75], ["COMSCI 3100", 3, 1.5]];
+	var cols = [10, 70, 200, 280, 420, 560];
+	var rowH = 90;
 	var c = document.createElement("canvas");
-	c.width = 900; c.height = 60 + rows.length * 60;
+	c.width = 570; c.height = 60 + rows.length * rowH + 2;
 	var g = c.getContext("2d");
 	g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
 	g.fillStyle = "#333"; g.strokeStyle = "#333"; g.lineWidth = 2;
-	g.font = "bold 20px sans-serif";
-	["No.", "SUBJECTS", "UNITS", "GRADE", "REMARKS"].forEach(function (h, i) { g.fillText(h, cols[i] + 10, 38); });
+	g.font = "bold 18px sans-serif";
+	["No.", "SUBJECTS", "UNITS", "GRADE", "REMARKS"].forEach(function (h, i) { g.fillText(h, cols[i] + 6, 38); });
 	g.font = "22px sans-serif";
+	function line(x0, y0, x1, y1) { g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); }
+	line(cols[0], 0, cols[5], 0);
 	rows.forEach(function (r, ri) {
-		var y = 60 + ri * 60;
-		r.forEach(function (t, i) { g.fillText(t, cols[i] + 10, y + 38); });
-		g.beginPath(); g.moveTo(cols[0], y); g.lineTo(cols[5], y); g.stroke();
+		var y = 60 + ri * rowH;
+		line(cols[0], y, cols[5], y);
+		r.forEach(function (t, i) {
+			if (Array.isArray(t)) {
+				g.fillText(t[0], cols[i] + 6, y + 36);
+				g.fillText(t[1], cols[i] + 6, y + 72);
+			} else {
+				g.fillText(t, cols[i] + 6, y + 54);
+			}
+		});
 	});
-	cols.forEach(function (x) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, c.height); g.stroke(); });
+	line(cols[0], c.height - 1, cols[5], c.height - 1);
+	cols.forEach(function (x) { line(x, 0, x, c.height); });
 
 	function done(msg) {
 		document.getElementById("out").textContent = msg;
@@ -44,7 +57,7 @@
 		window.GCalcOCR.read(blob, function () {}).then(function (res) {
 			var got = res.rows.map(function (r) { return [r.name, r.units, r.grades]; });
 			var ok = JSON.stringify(got) === JSON.stringify(expected);
-			done("GCALC_SELFTEST " + (ok ? "PASS" : "FAIL") + " " + (Date.now() - t0) + "ms " + JSON.stringify(got));
+			done("GCALC_SELFTEST " + (ok ? "PASS" : "FAIL") + " " + res.mode + " " + (Date.now() - t0) + "ms " + JSON.stringify(got));
 		}).catch(function (e) {
 			done("GCALC_SELFTEST FAIL error " + (e && (e.message || e)));
 		});

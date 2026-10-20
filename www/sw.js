@@ -1,5 +1,5 @@
 /* Offline cache for the installed web app. Bump VERSION when files change. */
-var VERSION = "gcalc-v6";
+var VERSION = "gcalc-v7";
 var FILES = [
   "./",
   "index.html",
