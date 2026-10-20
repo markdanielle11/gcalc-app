@@ -671,7 +671,12 @@
 		var known = {};
 		Object.keys(letters).forEach(function (k) { if (KNOWN_PREFIXES[k]) known[k] = letters[k]; });
 		var prefix = Object.keys(known).length ? pick(known) : Object.keys(letters).length ? fixPrefix(pick(letters)) : null;
-		var name = prefix ? prefix + " " + pick(numbers) : null;
+		// "LAB" is never imagined by the reader; if any reading saw it, keep it, so a
+		// lab part isn't mistaken for (and dropped as a copy of) its lecture.
+		var labs = {};
+		Object.keys(numbers).forEach(function (k) { if (/LAB/.test(k)) labs[k] = numbers[k]; });
+		var number = Object.keys(labs).length ? pick(labs) : pick(numbers);
+		var name = prefix ? prefix + " " + number : null;
 		if (window.GCALC_DEBUG) console.log("subject " + JSON.stringify(raw) + " -> " + name);
 		if (out) out.raw = raw;
 		return name;
