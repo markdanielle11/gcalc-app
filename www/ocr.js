@@ -290,6 +290,19 @@
 		return fits.length === 1 ? parseFloat(fits[0]) : 0;
 	}
 
+	/* Pulls a grade out of whatever the reader saw in a grade cell:
+	   "2.75", "2,75", "2. 75", "275", "2.7S" all become 2.75. */
+	function gradeFromText(text) {
+		var t = text
+			.replace(/[Oo]/g, "0").replace(/[Ss]/g, "5").replace(/[Il|]/g, "1").replace(/B/g, "8").replace(/Z/g, "2")
+			.replace(/,/g, ".").replace(/\s+/g, "");
+		var m = t.match(/[1-5]\.\d{2}/);
+		if (m) return fixGrade(m[0]);
+		m = t.match(/^[1-5]\d{2}$/); // decimal point missed
+		if (m) return fixGrade(m[0][0] + "." + m[0].slice(1));
+		return 0;
+	}
+
 	function toUnits(token) {
 		if (!/^\d{1,2}(\.0)?$/.test(token)) return 0;
 		var u = Math.round(parseFloat(token));
@@ -376,14 +389,16 @@
 					}
 				} else {
 					var gtext = await recognizeCell(worker, cell, "7");
-					var tok = (gtext.match(/\d\.\d{2}/) || [""])[0];
-					grade = fixGrade(tok);
-					if (!grade && !/[A-Za-z]{2}/.test(gtext)) {
+					var words = /[A-Za-z]{3,}/.test(gtext.replace(/[OoSsIlBZ]/g, ""));
+					grade = words ? 0 : gradeFromText(gtext);
+					if (!grade && !words) {
 						// No words in the cell, so it should be a number: read digits only.
-						await worker.setParameters({ tessedit_char_whitelist: "0123456789." });
+						await worker.setParameters({ tessedit_char_whitelist: "0123456789.," });
 						var dtext = await recognizeCell(worker, cell, "7");
+						if (!gradeFromText(dtext)) dtext = await recognizeCell(worker, cell, "8");
 						await worker.setParameters({ tessedit_char_whitelist: WHITELIST });
-						grade = fixGrade((dtext.match(/\d\.\d{2}/) || [""])[0]);
+						grade = gradeFromText(dtext);
+						if (window.GCALC_DEBUG) console.log("grade cell: " + JSON.stringify(gtext) + " digits: " + JSON.stringify(dtext));
 					}
 					break; // first cell after units is the grade (or "NOT YET")
 				}
