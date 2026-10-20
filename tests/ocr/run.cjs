@@ -66,7 +66,14 @@ function score(item, rows) {
 	let pass = 0;
 	const fails = [];
 	const times = [];
+	let count = 0;
 	for (const item of expected) {
+		// A student imports a few screenshots per visit; start a fresh page every
+		// 25 so one long run doesn't pile up the browser's WebAssembly memory.
+		if (++count % 25 === 0) {
+			await page.reload();
+			await page.waitForFunction(() => window.GCalcOCR);
+		}
 		const t0 = Date.now();
 		let res;
 		try {

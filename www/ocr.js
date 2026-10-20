@@ -482,7 +482,7 @@
 		}).sort(function (a, b) { return b.score - a.score; });
 		var best = scored[0], second = scored[1] || { score: 0 };
 		if (window.GCALC_DEBUG) console.log("shape " + scored.slice(0, 3).map(function (x) { return x.text + "=" + x.score.toFixed(3); }).join(" "));
-		return { value: best.value, score: best.score, margin: best.score - second.score };
+		return { value: best.value, score: best.score, margin: best.score - second.score, ranked: scored };
 	}
 
 	var UNIT_CANDIDATES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (u) { return { value: u, text: String(u) }; });
@@ -631,7 +631,7 @@
 
 	/* Reads a subject cell. Each reading votes separately for the letters and for
 	   the number, so "FIL 1400", "FIL 1100" and "Fit. 1100" agree on FIL 1100. */
-	async function readSubject(worker, cell) {
+	async function readSubject(worker, cell, out) {
 		var kinds = cell.small ? ["binary", "gray", "gray2"] : ["binary", "gray"];
 		var letters = {}, numbers = {}, raw = [];
 		var clean = 0;
@@ -673,6 +673,7 @@
 		var prefix = Object.keys(known).length ? pick(known) : Object.keys(letters).length ? fixPrefix(pick(letters)) : null;
 		var name = prefix ? prefix + " " + pick(numbers) : null;
 		if (window.GCALC_DEBUG) console.log("subject " + JSON.stringify(raw) + " -> " + name);
+		if (out) out.raw = raw;
 		return name;
 	}
 
@@ -690,10 +691,11 @@
 		var grid = prep.grid;
 		var rows = [];
 		var seen = {};
+		var totalRow = null;
 		for (var r = 0; r < grid.rows.length; r++) {
 			report(0.3 + 0.65 * (r / grid.rows.length), "Reading row " + (r + 1) + " of " + grid.rows.length);
 			var band = grid.rows[r];
-			var name = null, units = 0, grade = 0, nameCol = -1;
+			var name = null, units = 0, grade = 0, nameCol = -1, unitsCol = -1, unitsRank = null, rowNo = 0;
 			var phase = "subject", tried = 0;
 
 			for (var c = 0; c < grid.cols.length; c++) {
@@ -703,11 +705,20 @@
 
 				if (phase === "subject") {
 					if (++tried > 3) break; // no code in the first cells: not a subject row
-					var subject = await readSubject(worker, cell);
+					var seenText = {};
+					var subject = await readSubject(worker, cell, seenText);
 					if (subject) {
 						name = subject;
 						nameCol = c;
 						phase = "units";
+					} else {
+						var rawText = (seenText.raw || []).join(" ");
+						if (/TOTAL/i.test(rawText)) {
+							totalRow = { band: band };
+							break;
+						}
+						var no = (seenText.raw || []).map(function (t) { return t.trim(); }).filter(function (t) { return /^\d{1,2}$/.test(t); });
+						if (no.length) rowNo = parseInt(no[0], 10);
 					}
 				} else if (phase === "units") {
 					// A lone digit is easy to miss as a block; read it as a single word or character.
@@ -726,7 +737,10 @@
 						if (su && su.score >= 0.8 && su.margin >= 0.06) u1 = { best: { value: su.value }, raw: u1.raw };
 					}
 					if (u1.best) {
-						units = await confirmNumber(cell, u1.best.value, UNIT_CANDIDATES, unanimous(u1));
+						var su2 = await shapeRead(cell, UNIT_CANDIDATES);
+						unitsRank = su2 && su2.ranked;
+						units = decideNumber(su2, u1.best.value, unanimous(u1));
+						unitsCol = c;
 						phase = "grade";
 					} else {
 						var asGrade = u1.raw.map(gradeFromText).filter(Boolean)[0];
@@ -762,16 +776,74 @@
 					row.extent = band.extent || [0, prep.W];
 					row.extentBelow = band.extentBelow || row.extent;
 					row.height = band[1] - band[0];
+					row.rowNo = rowNo;
+					row.unitsCol = unitsCol;
+					row.unitsRank = unitsRank;
 					rows.push(row);
 				}
 			}
 		}
 
-		return finalizeRows(rows, prep);
+		// The TOTAL row's units, to double-check the units of every subject.
+		var total = 0;
+		if (totalRow) {
+			var uc = modeOf(rows.map(function (x) { return x.unitsCol; }).filter(function (x) { return x >= 0; }));
+			if (uc >= 0) {
+				var tcell = cropCell(prep, grid.cols[uc][0], totalRow.band[0], grid.cols[uc][1], totalRow.band[1]);
+				if (tcell) {
+					var t1 = await bestRead(worker, tcell, ["8", "7"], function (t) { var v = t.trim(); return /^\d{1,3}$/.test(v) ? parseInt(v, 10) : 0; }, "0123456789");
+					if (t1.best) total = t1.best.value;
+				}
+			}
+		}
+		return finalizeRows(rows, prep, total);
+	}
+
+	function modeOf(values) {
+		var counts = {}, best = -1, bestN = 0;
+		values.forEach(function (v) {
+			counts[v] = (counts[v] || 0) + 1;
+			if (counts[v] > bestN) { bestN = counts[v]; best = v; }
+		});
+		return best;
+	}
+
+	/* The shape check's choice when it is confident, otherwise the reader's. */
+	function decideNumber(s, value, strong) {
+		if (!s || s.value === value) return value;
+		if (strong ? s.score >= 0.85 && s.margin >= 0.1 : s.score >= 0.7 && s.margin >= 0.05) return s.value;
+		return value;
+	}
+
+	/* When the whole table is on the screenshot (row numbers 1..n) and the units
+	   don't add up to the TOTAL row, change the one units value whose next-best
+	   shape makes them add up. */
+	function fixUnitsByTotal(rows, total) {
+		if (!total || !rows.length) return;
+		var sum = rows.reduce(function (a, r) { return a + r.units; }, 0);
+		var diff = total - sum;
+		if (!diff) return;
+		var nos = rows.map(function (r) { return r.rowNo; }).sort(function (a, b) { return a - b; });
+		for (var i = 0; i < nos.length; i++) if (nos[i] !== i + 1) return; // rows missing or unnumbered
+		var best = null;
+		rows.forEach(function (r) {
+			if (!r.unitsRank || !r.unitsFound) return;
+			var cur = r.unitsRank.filter(function (x) { return x.value === r.units; })[0];
+			var curScore = cur ? cur.score : 0;
+			r.unitsRank.slice(0, 4).forEach(function (alt) {
+				if (alt.value - r.units !== diff || alt.score < 0.4) return;
+				var cost = curScore - alt.score;
+				if (!best || cost < best.cost) best = { row: r, value: alt.value, cost: cost };
+			});
+		});
+		if (best) {
+			if (window.GCALC_DEBUG) console.log("total " + total + ": " + best.row.name + " units " + best.row.units + " -> " + best.value);
+			best.row.units = best.value;
+		}
 	}
 
 	/* Keeps only rows that belong to the grades table. */
-	function finalizeRows(rows, prep) {
+	function finalizeRows(rows, prep, total) {
 		// Real subjects all sit in the same column. Anything found elsewhere
 		// (a "1ST SEMESTER 2026-2027" box above the table, say) is dropped.
 		var votes = {};
@@ -801,16 +873,21 @@
 		// visible row may sit right under the site's full-width header bar).
 		var heights = rows.filter(function (r) { return fits(r.extent); }).map(function (r) { return r.height; });
 		var typical = heights.length ? median(heights) : Infinity;
-		return rows.filter(function (r) {
+		rows = rows.filter(function (r) {
 			if (fits(r.extent)) return true;
 			// Only the line below is the table's: accept a row-sized band only (not
 			// the page header with the semester dropdown above the table).
 			return fits(r.extentBelow) && r.height <= typical * 1.5;
-		}).map(function (r) {
+		});
+		fixUnitsByTotal(rows, total);
+		return rows.map(function (r) {
 			delete r.col;
 			delete r.extent;
 			delete r.extentBelow;
 			delete r.height;
+			delete r.rowNo;
+			delete r.unitsCol;
+			delete r.unitsRank;
 			return r;
 		});
 	}
@@ -1049,10 +1126,11 @@
 		var cellText = wordsByCell(prep, layout);
 		var rows = [];
 		var seen = {};
+		var totalRow = -1;
 		for (var r = 0; r < grid.rows.length; r++) {
 			report(0.45 + 0.5 * (r / grid.rows.length), "Checking row " + (r + 1) + " of " + grid.rows.length);
 			var band = grid.rows[r];
-			var name = null, units = 0, grade = 0, nameCol = -1;
+			var name = null, units = 0, grade = 0, nameCol = -1, unitsCol = -1, unitsRank = null, rowNo = 0;
 			var phase = "subject", tried = 0;
 
 			for (var c = 0; c < grid.cols.length; c++) {
@@ -1074,6 +1152,11 @@
 					if (name) {
 						nameCol = c;
 						phase = "units";
+					} else if (/TOTAL/i.test(text)) {
+						totalRow = r;
+						break;
+					} else if (/^\d{1,2}$/.test(text)) {
+						rowNo = parseInt(text, 10);
 					}
 				} else if (phase === "units") {
 					var u = hasWords(text) ? 0 : toUnits(lookalikeDigits(text.replace(/\s+/g, "")));
@@ -1085,7 +1168,10 @@
 						if (u1.best) u = u1.best.value;
 					}
 					if (u) {
-						units = await confirmNumber(cell, u, UNIT_CANDIDATES, true);
+						var su = await shapeRead(cell, UNIT_CANDIDATES);
+						unitsRank = su && su.ranked;
+						units = decideNumber(su, u, true);
+						unitsCol = c;
 						phase = "grade";
 					} else {
 						if (gradeFromText(text) && !hasWords(text)) {
@@ -1119,11 +1205,20 @@
 					row.extent = band.extent || [0, prep.W];
 					row.extentBelow = band.extentBelow || row.extent;
 					row.height = band[1] - band[0];
+					row.rowNo = rowNo;
+					row.unitsCol = unitsCol;
+					row.unitsRank = unitsRank;
 					rows.push(row);
 				}
 			}
 		}
-		return finalizeRows(rows, prep);
+		var total = 0;
+		if (totalRow >= 0) {
+			var uc = modeOf(rows.map(function (x) { return x.unitsCol; }).filter(function (x) { return x >= 0; }));
+			var tt = uc >= 0 ? cellText(totalRow, uc).replace(/\s+/g, "") : "";
+			if (/^\d{1,3}$/.test(tt)) total = parseInt(tt, 10);
+		}
+		return finalizeRows(rows, prep, total);
 	}
 
 	/**
@@ -1133,7 +1228,6 @@
 	 */
 	async function read(file, onProgress) {
 		var report = typeof onProgress === "function" ? onProgress : function () {};
-		var worker = null;
 		report(0.02, "Opening image");
 
 		// Android app: Google's on-device text recognition is the most accurate.
@@ -1182,10 +1276,22 @@
 			report(0.05, "Trying another way");
 		}
 
+		var loaded = await Promise.all([loadLibrary(), loadImage(file)]);
 		try {
-			var loaded = await Promise.all([loadLibrary(), loadImage(file)]);
-			var T = loaded[0];
-			var prep = prepare(loaded[1]);
+			return await readWithTesseract(loaded[0], loaded[1], report);
+		} catch (err) {
+			// Safari can run the reader out of memory on very tall screenshots:
+			// start a fresh reader on a smaller copy and try once more.
+			if (!/memory|bounds|abort|RuntimeError/i.test(String(err && (err.message || err)))) throw err;
+			report(0.1, "Trying again");
+			return await readWithTesseract(loaded[0], loaded[1], report, 5e6);
+		}
+	}
+
+	async function readWithTesseract(T, img, report, maxPixels) {
+		var worker = null;
+		try {
+			var prep = prepare(img, maxPixels);
 			report(0.1, "Starting the reader");
 			worker = await T.createWorker("eng", 1, {
 				workerPath: BASE + "worker.min.js",
@@ -1202,22 +1308,7 @@
 			report(0.25, "Reading text");
 
 			if (prep.grid) {
-				var tableRows;
-				try {
-					tableRows = await readTable(worker, prep, report);
-				} catch (err) {
-					// Safari can run the reader out of memory on very tall screenshots:
-					// start a fresh reader on a smaller copy and try once more.
-					if (!/memory|bounds|abort/i.test(String(err && err.message))) throw err;
-					worker.terminate();
-					worker = await T.createWorker("eng", 1, {
-						workerPath: BASE + "worker.min.js", corePath: BASE + "core", langPath: BASE + "lang",
-						gzip: false, cacheMethod: "none", workerBlobURL: false
-					});
-					await worker.setParameters({ preserve_interword_spaces: "1", tessedit_char_whitelist: WHITELIST });
-					prep = prepare(loaded[1], 5e6);
-					tableRows = prep.grid ? await readTable(worker, prep, report) : [];
-				}
+				var tableRows = await readTable(worker, prep, report);
 				if (tableRows.length) {
 					report(1, "Done");
 					return { rows: tableRows, mode: "table" };
@@ -1230,7 +1321,13 @@
 			report(1, "Done");
 			return { rows: parse(result.data.text || ""), mode: "lines" };
 		} finally {
-			if (worker) worker.terminate();
+			if (worker) {
+				try {
+					await worker.terminate();
+				} catch (e) {
+					/* already gone */
+				}
+			}
 		}
 	}
 
