@@ -13,3 +13,8 @@ android/.idea/
 # OS
 .DS_Store
 Thumbs.db
+
+# OCR test output (generated)
+tests/ocr/.render.html
+tests/ocr/corpus/
+android/app/src/debug/assets/corpus/

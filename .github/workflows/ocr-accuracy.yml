@@ -1,0 +1,50 @@
+name: OCR accuracy
+
+# Generates CAIS-style grade screenshots (phones, tablets, laptops, light/dark,
+# Messenger-compressed) and checks the web reader in Chrome, Safari's engine
+# (WebKit) and Firefox. The Android AI reader is checked in "Build GCalc".
+on:
+  push:
+    branches: [main]
+    paths:
+      - "www/ocr.js"
+      - "www/vendor/**"
+      - "tests/ocr/**"
+      - ".github/workflows/ocr-accuracy.yml"
+  workflow_dispatch:
+
+jobs:
+  web:
+    name: Web reader (${{ matrix.engine }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [chromium, webkit, firefox]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Install Playwright and sharp
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools" && cd "$RUNNER_TEMP/tools"
+          npm init -y >/dev/null
+          npm install playwright@1.56.0 sharp@0.35.4
+          npx playwright install --with-deps chromium ${{ matrix.engine }}
+
+      - name: Generate test screenshots
+        run: node tests/ocr/generate.cjs "$RUNNER_TEMP/tools/node_modules/playwright" "$RUNNER_TEMP/corpus"
+
+      - name: Read them
+        run: node tests/ocr/run.cjs "$RUNNER_TEMP/tools/node_modules/playwright" "$RUNNER_TEMP/corpus" ${{ matrix.engine }} | tee result.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          RESULT="$(tail -1 result.txt 2>/dev/null || echo 'no result')"
+          echo "::notice title=OCR ${{ matrix.engine }}::$RESULT"
+          grep '^FAIL' result.txt | head -20 | while IFS= read -r l; do echo "::warning title=OCR ${{ matrix.engine }}::$l"; done

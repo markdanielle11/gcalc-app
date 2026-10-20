@@ -51,6 +51,20 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME"
           ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools"
 
+      # Test screenshots for the emulator check (debug build only)
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Generate OCR test screenshots
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools" && cd "$RUNNER_TEMP/tools"
+          npm init -y >/dev/null
+          npm install playwright@1.56.0 sharp@0.35.4
+          npx playwright install --with-deps chromium
+          cd "$GITHUB_WORKSPACE"
+          node tests/ocr/generate.cjs "$RUNNER_TEMP/tools/node_modules/playwright" android/app/src/debug/assets/corpus
+
       - name: Build APKs
         working-directory: android
         env:
@@ -81,7 +95,7 @@ jobs:
     name: Android OCR test (emulator)
     needs: android
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 

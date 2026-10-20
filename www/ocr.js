@@ -100,15 +100,36 @@
 		return lines;
 	}
 
-	/* The space between consecutive lines. */
-	function bandsBetween(lines, minSize) {
+	/* The space between consecutive lines. With limit (the image height) it also
+	   adds one row-sized band above the first line and below the last one: in a
+	   scrolled screenshot the first visible row's top border is often hidden
+	   under the site's header bar. */
+	function bandsBetween(lines, minSize, limit) {
 		var bands = [];
 		for (var i = 0; i + 1 < lines.length; i++) {
 			var a = lines[i][1] + 3, b = lines[i + 1][0] - 3;
 			if (b - a >= minSize) {
 				var band = [a, b];
 				band.extent = lines[i].extent; // left/right ends of the line above
+				band.extentBelow = lines[i + 1].extent;
 				bands.push(band);
+			}
+		}
+		if (limit && bands.length >= 2) {
+			var sizes = bands.map(function (x) { return x[1] - x[0]; }).sort(function (x, y) { return x - y; });
+			var m = sizes[Math.floor(sizes.length / 2)];
+			var first = lines[0], last = lines[lines.length - 1];
+			if (first[0] - 3 >= m * 0.6) {
+				var top = [Math.max(0, first[0] - 3 - m), first[0] - 3];
+				top.extent = top.extentBelow = first.extent;
+				top.edge = true;
+				bands.unshift(top);
+			}
+			if (limit - 1 - (last[1] + 3) >= m * 0.6) {
+				var bottom = [last[1] + 3, Math.min(limit - 1, last[1] + 3 + m)];
+				bottom.extent = bottom.extentBelow = last.extent;
+				bottom.edge = true;
+				bands.push(bottom);
 			}
 		}
 		return bands;
@@ -222,7 +243,7 @@
 		var grid = null;
 		if (rowLines.length >= 3 && colLines.length >= 4) {
 			grid = {
-				rows: bandsBetween(rowLines, 18),
+				rows: bandsBetween(rowLines, 18, H),
 				cols: bandsBetween(colLines, 18)
 			};
 			if (grid.rows.length < 2 || grid.cols.length < 3) grid = null;
@@ -257,7 +278,9 @@
 			}
 			if (any) rowsWithInk++;
 		}
-		if (count < 25 || maxX - minX < 4 || maxY - minY < 8) return null; // empty cell
+		// Empty cell? (A lone "1" can be just a couple of pixels wide, so only the
+		// height and the amount of ink decide.)
+		if (count < 12 || maxY - minY < 8) return null;
 
 		minX = Math.max(x0, minX - 2);
 		minY = Math.max(y0, minY - 2);
@@ -270,8 +293,20 @@
 		var scale = Math.max(1, Math.min(4, 40 / Math.max(1, lineHeight)));
 		var cache = {};
 
+		// Darkest and lightest gray in the cell, to stretch faint text to full contrast.
+		var lo = 255, hi = 0;
+		for (var gy = minY; gy <= maxY; gy++) {
+			for (var gx = minX; gx <= maxX; gx++) {
+				var gv = gray[gy * W + gx];
+				if (gv < lo) lo = gv;
+				if (gv > hi) hi = gv;
+			}
+		}
+		var span = Math.max(1, hi - lo);
+
 		function make(kind) {
 			if (cache[kind]) return cache[kind];
+			var isGray = kind === "gray" || kind === "gray2";
 			var src = document.createElement("canvas");
 			src.width = w;
 			src.height = h;
@@ -281,7 +316,7 @@
 			for (var yy = 0; yy < h; yy++) {
 				for (var xx = 0; xx < w; xx++) {
 					var i = (minY + yy) * W + (minX + xx);
-					var v = kind === "gray" ? gray[i] : (clean[i] ? 0 : 255);
+					var v = isGray ? Math.round((gray[i] - lo) * 255 / span) : (clean[i] ? 0 : 255);
 					var o = (yy * w + xx) * 4;
 					d[o] = d[o + 1] = d[o + 2] = v;
 					d[o + 3] = 255;
@@ -289,20 +324,21 @@
 			}
 			sctx.putImageData(img, 0, 0);
 			var pad = 24;
+			var k = kind === "gray2" ? scale * 1.6 : scale;
 			var c = document.createElement("canvas");
-			c.width = Math.round(w * scale) + pad * 2;
-			c.height = Math.round(h * scale) + pad * 2;
+			c.width = Math.round(w * k) + pad * 2;
+			c.height = Math.round(h * k) + pad * 2;
 			var ctx = c.getContext("2d");
 			ctx.fillStyle = "#fff";
 			ctx.fillRect(0, 0, c.width, c.height);
 			ctx.imageSmoothingEnabled = true;
 			ctx.imageSmoothingQuality = "high";
-			ctx.drawImage(src, pad, pad, Math.round(w * scale), Math.round(h * scale));
+			ctx.drawImage(src, pad, pad, Math.round(w * k), Math.round(h * k));
 			cache[kind] = c;
 			return c;
 		}
 
-		return { make: make, small: lineHeight < 30 };
+		return { make: make, small: lineHeight < 30, inkWidth: w - 4, inkHeight: rowsWithInk };
 	}
 
 	function toGrade(token) {
@@ -391,11 +427,12 @@
 	}
 
 	/* Reads a cell with each page mode until accept() takes the text. Small text is
-	   read both as black-and-white and as grayscale, and the more confident of
-	   the accepted readings wins. */
+	   read as black-and-white, as grayscale, and as larger grayscale; the value
+	   most of the readings agree on wins (ties: the most confident reading). */
 	async function bestRead(worker, cell, psms, accept, whitelist) {
-		var kinds = cell.small ? ["binary", "gray"] : ["binary"];
-		var best = null, raw = [];
+		var kinds = cell.small ? ["binary", "gray", "gray2"] : ["binary", "gray"];
+		var votes = {}, raw = [];
+		var accepted = 0;
 		for (var k = 0; k < kinds.length; k++) {
 			var canvas = cell.make(kinds[k]);
 			for (var p = 0; p < psms.length; p++) {
@@ -403,13 +440,72 @@
 				raw.push(r.text);
 				var value = accept(r.text);
 				if (value) {
-					if (!best || r.conf > best.conf) best = { value: value, conf: r.conf, text: r.text };
+					var key = JSON.stringify(value.name || value);
+					var v = votes[key] || (votes[key] = { value: value, count: 0, conf: 0, text: r.text });
+					v.count++;
+					v.conf = Math.max(v.conf, r.conf);
+					accepted++;
 					break;
 				}
 			}
+			// Big clear text: stop as soon as one reading is accepted with high confidence.
+			if (!cell.small && accepted && Object.keys(votes).length === 1 && votes[Object.keys(votes)[0]].conf >= 80) break;
 		}
+		var best = null;
+		Object.keys(votes).forEach(function (key) {
+			var v = votes[key];
+			if (!best || v.count > best.count || (v.count === best.count && v.conf > best.conf)) best = v;
+		});
 		if (window.GCALC_DEBUG) console.log("cell " + JSON.stringify(raw) + " -> " + (best ? JSON.stringify(best.value) : "none"));
 		return { best: best, raw: raw };
+	}
+
+	/* Reads a subject cell. Each reading votes separately for the letters and for
+	   the number, so "FIL 1400", "FIL 1100" and "Fit. 1100" agree on FIL 1100. */
+	async function readSubject(worker, cell) {
+		var kinds = cell.small ? ["binary", "gray", "gray2"] : ["binary", "gray"];
+		var letters = {}, numbers = {}, raw = [];
+		var clean = 0;
+		for (var k = 0; k < kinds.length; k++) {
+			var r = await readText(worker, cell.make(kinds[k]), "6");
+			raw.push(r.text);
+			var m = matchCode(r.text);
+			var weight = 1;
+			if (!m) {
+				// Second chance: capitals only, punctuation dropped ("Fit. 1100").
+				m = matchCode(r.text.toUpperCase().replace(/[^A-Z0-9& ]/g, ""));
+				weight = 0.5;
+			}
+			if (!m || m.index > 3) continue;
+			var parts = m.name.split(" ");
+			[[letters, parts[0]], [numbers, parts[1]]].forEach(function (pair) {
+				var v = pair[0][pair[1]] || (pair[0][pair[1]] = { count: 0, conf: 0 });
+				v.count += weight;
+				v.conf = Math.max(v.conf, r.conf);
+			});
+			if (weight === 1) clean++;
+			// Big clear text: one confident clean reading is enough.
+			if (!cell.small && clean && r.conf >= 85) break;
+		}
+		function pick(votes) {
+			var best = null, bestKey = null;
+			Object.keys(votes).forEach(function (key) {
+				var v = votes[key];
+				if (!best || v.count > best.count || (v.count === best.count && v.conf > best.conf)) {
+					best = v;
+					bestKey = key;
+				}
+			});
+			return bestKey;
+		}
+		var name = Object.keys(letters).length ? pick(letters) + " " + pick(numbers) : null;
+		if (window.GCALC_DEBUG) console.log("subject " + JSON.stringify(raw) + " -> " + name);
+		return name;
+	}
+
+	/* Letters that are really digits in a number-only cell ("S" for 5, "l" for 1). */
+	function lookalikeDigits(text) {
+		return text.replace(/[Ss$]/g, "5").replace(/[Oo]/g, "0").replace(/[Il|!\]\[]/g, "1").replace(/Z/g, "2").replace(/B/g, "8").replace(/G/g, "6").replace(/[Tt]/g, "7");
 	}
 
 	function hasWords(text) {
@@ -434,15 +530,24 @@
 
 				if (phase === "subject") {
 					if (++tried > 3) break; // no code in the first cells: not a subject row
-					var s1 = await bestRead(worker, cell, ["6"], matchCode);
-					if (s1.best) {
-						name = s1.best.value.name;
+					var subject = await readSubject(worker, cell);
+					if (subject) {
+						name = subject;
 						nameCol = c;
 						phase = "units";
 					}
 				} else if (phase === "units") {
 					// A lone digit is easy to miss as a block; read it as a single word or character.
 					var u1 = await bestRead(worker, cell, ["8", "10"], toUnits, "0123456789.");
+					if (!u1.best) {
+						// A lone "1" is thin and easy to lose: read again allowing lookalikes,
+						// and fall back to the glyph's shape (tall and narrow, one stroke).
+						var u2 = await bestRead(worker, cell, ["10", "8"], function (t) { return hasWords(t) ? 0 : toUnits(lookalikeDigits(t.trim())); });
+						if (u2.best) u1 = u2;
+						else if (!u1.raw.some(function (t) { return /\d/.test(t); }) && cell.inkHeight > 6 && cell.inkWidth / cell.inkHeight < 0.45) {
+							u1 = { best: { value: 1 }, raw: u1.raw };
+						}
+					}
 					if (u1.best) {
 						units = u1.best.value;
 						phase = "grade";
@@ -475,6 +580,8 @@
 					var row = makeRow(name, units, grade);
 					row.col = nameCol;
 					row.extent = band.extent || [0, prep.W];
+					row.extentBelow = band.extentBelow || row.extent;
+					row.height = band[1] - band[0];
 					rows.push(row);
 				}
 			}
@@ -502,11 +609,23 @@
 		var midLeft = median(rows.map(function (r) { return r.extent[0]; }));
 		var midRight = median(rows.map(function (r) { return r.extent[1]; }));
 		var tolerance = prep.W * 0.04;
+		function fits(ext) {
+			return Math.abs(ext[0] - midLeft) <= tolerance && Math.abs(ext[1] - midRight) <= tolerance;
+		}
+		// The line above or the line below must belong to the table (the first
+		// visible row may sit right under the site's full-width header bar).
+		var heights = rows.filter(function (r) { return fits(r.extent); }).map(function (r) { return r.height; });
+		var typical = heights.length ? median(heights) : Infinity;
 		return rows.filter(function (r) {
-			return Math.abs(r.extent[0] - midLeft) <= tolerance && Math.abs(r.extent[1] - midRight) <= tolerance;
+			if (fits(r.extent)) return true;
+			// Only the line below is the table's: accept a row-sized band only (not
+			// the page header with the semester dropdown above the table).
+			return fits(r.extentBelow) && r.height <= typical * 1.5;
 		}).map(function (r) {
 			delete r.col;
 			delete r.extent;
+			delete r.extentBelow;
+			delete r.height;
 			return r;
 		});
 	}
@@ -725,5 +844,5 @@
 		}
 	}
 
-	window.GCalcOCR = { read: read, parse: parse, parseLayout: parseLayout, _prepare: prepare };
+	window.GCalcOCR = { read: read, parse: parse, parseLayout: parseLayout, _prepare: prepare, _cropCell: cropCell };
 })();
