@@ -55,7 +55,9 @@ const DEVICES = [
 	{ id: "desktop", width: 1920, height: 1080, dpr: 1, mobile: false, chrome: null, scroll: 0.05 },
 	// "Desktop site" turned on in a phone browser: the page is laid out 980px wide and shrunk
 	{ id: "android-desktop-site", width: 980, height: 2178, dpr: 1.102, mobile: false, chrome: "android", scroll: null },
-	{ id: "ios-desktop-site", width: 980, height: 2120, dpr: 1.194, mobile: false, chrome: "ios", scroll: null }
+	{ id: "ios-desktop-site", width: 980, height: 2120, dpr: 1.194, mobile: false, chrome: "ios", scroll: null },
+	// Android "scroll capture" (long screenshot of the whole page)
+	{ id: "android-long", width: 412, height: 915, dpr: 2.625, mobile: true, chrome: null, scroll: null, fullPage: true }
 ];
 
 const cell = (text, left) => `<td style="border: 1px solid #000000; border-collapse: collapse; font-size: 18px;${left ? "" : " text-align: center;"} font-family: roboto;">${text}</td>`;
@@ -86,7 +88,8 @@ const CHROME = {
 	const browser = await chromium.launch();
 	const expected = [];
 	const renderFile = path.join(__dirname, ".render.html");
-	for (const dev of DEVICES) {
+	const only = process.env.GCALC_DEVICES ? new RegExp(process.env.GCALC_DEVICES) : null;
+	for (const dev of DEVICES.filter((d) => !only || only.test(d.id))) {
 		for (const [name, ds] of Object.entries(DATASETS)) {
 			for (const dark of [false, true]) {
 				const html = pageHtml(ds).replace("</body>", (dev.chrome ? CHROME[dev.chrome] : "") + "</body>");
@@ -112,23 +115,24 @@ const CHROME = {
 					// Approximates Chrome's automatic dark mode for websites
 					await page.addStyleTag({ content: "html{filter:invert(1) hue-rotate(180deg);background:#fff}" });
 				}
-				const info = await page.evaluate((scroll) => {
+				const info = await page.evaluate(([scroll, full]) => {
 					const table = document.querySelector("#grade_list table");
 					if (scroll !== null) {
 						const top = table.getBoundingClientRect().top + window.scrollY;
 						window.scrollTo(0, Math.max(0, top - innerHeight * scroll));
 					}
 					// Rows fully on screen and not under the phone's own bars
-					const blockers = [...document.querySelectorAll("body > div[style*='position:fixed']")].map((b) => b.getBoundingClientRect());
+					const blockers = full ? [] : [...document.querySelectorAll("body > div[style*='position:fixed']")].map((b) => b.getBoundingClientRect());
 					const visible = [...document.querySelectorAll("tr[data-code]")].filter((tr) => {
 						const r = tr.getBoundingClientRect();
-						if (r.top < 0 || r.bottom > innerHeight || r.right > innerWidth + 1) return false;
+						if (!full && (r.top < 0 || r.bottom > innerHeight)) return false;
+						if (r.right > innerWidth + 1) return false;
 						return !blockers.some((b) => !(r.bottom <= b.top || r.top >= b.bottom));
 					}).map((tr) => tr.dataset.code);
 					return { visible };
-				}, dev.scroll);
+				}, [dev.scroll, !!dev.fullPage]);
 				const file = `${dev.id}-${name}${dark ? "-dark" : ""}.png`;
-				await page.screenshot({ path: path.join(OUT, file) });
+				await page.screenshot({ path: path.join(OUT, file), fullPage: !!dev.fullPage });
 				const truth = ds.rows.map((r) => [r[0], r[1], r[5]]);
 				expected.push({ file, device: dev.id, truth, visible: info.visible });
 				if (!dark) {

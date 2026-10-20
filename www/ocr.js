@@ -164,7 +164,9 @@
 	/* Black text on white with table borders removed (they confuse the reader:
 	   a "|" next to "COMSCI" becomes "ICOMSCI"). Also finds the table grid. */
 	function prepare(img) {
-		var scale = Math.min(3, TARGET_WIDTH / img.width);
+		// Enlarge small screenshots, shrink big ones; also cap the total size
+		// (phone browsers refuse canvases much over ~16 million pixels).
+		var scale = Math.min(3, TARGET_WIDTH / img.width, Math.sqrt(12e6 / (img.width * img.height)));
 		var W = Math.max(1, Math.round(img.width * scale));
 		var H = Math.max(1, Math.round(img.height * scale));
 		var canvas = document.createElement("canvas");

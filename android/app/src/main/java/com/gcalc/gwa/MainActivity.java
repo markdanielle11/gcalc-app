@@ -276,13 +276,24 @@ public class MainActivity extends Activity {
         public void recognizeText(final String requestId, final String base64) {
             try {
                 byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
-                Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                // Huge images (long scrolling screenshots, camera photos): decode at a
+                // reduced size so the app can't run out of memory.
+                BitmapFactory.Options bounds = new BitmapFactory.Options();
+                bounds.inJustDecodeBounds = true;
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+                BitmapFactory.Options opts = new BitmapFactory.Options();
+                opts.inSampleSize = 1;
+                while ((long) (bounds.outWidth / opts.inSampleSize) * (bounds.outHeight / opts.inSampleSize) > 16_000_000L) {
+                    opts.inSampleSize *= 2;
+                }
+                Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, opts);
                 if (bitmap == null) {
                     deliverText(requestId, null, "That file could not be opened as an image.");
                     return;
                 }
                 // Small screenshots: enlarge so letters are big enough to read well.
                 float scale = Math.min(3f, 1600f / Math.max(1, bitmap.getWidth()));
+                scale = Math.min(scale, (float) Math.sqrt(16_000_000.0 / ((double) bitmap.getWidth() * bitmap.getHeight())));
                 if (scale > 1.05f) {
                     bitmap = Bitmap.createScaledBitmap(bitmap,
                             Math.round(bitmap.getWidth() * scale), Math.round(bitmap.getHeight() * scale), true);
