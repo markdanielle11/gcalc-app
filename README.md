@@ -50,6 +50,10 @@ android/             Android app that bundles www/ inside a WebView.
 .github/workflows/   Builds the APK and publishes the web app on every push to main.
 ```
 
+## Import accuracy tests
+
+`tests/ocr/` holds a replica of the CAIS "View Grades" page (real layout, fictional student and subjects). `generate.cjs` takes screenshots of it the way students do (phones in normal and "desktop site" mode, iPad, laptops, light and dark, Messenger-compressed) and `run.cjs` checks what Import reads from each one. GitHub Actions runs this on every change to the reader in Chrome, Safari's engine (WebKit) and Firefox, and runs the Android AI reader on the same screenshots in an emulator.
+
 ## Building
 
 The APK is built automatically by GitHub Actions on every push to `main` (see the **Actions** tab). To build on your own computer instead, install Android Studio, open the `android/` folder, and run **Build > Build APK(s)**, or from a terminal:

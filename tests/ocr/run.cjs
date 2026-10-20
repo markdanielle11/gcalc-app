@@ -100,7 +100,7 @@ function score(item, rows) {
 	// Read the first few failures again with the reader's debug log on.
 	for (const f of fails.slice(0, 6)) {
 		const lines = [];
-		const onLog = (m) => { const t = m.text(); if (/^(cell|subject|shape) /.test(t)) lines.push(t.slice(0, 160)); };
+		const onLog = (m) => { const t = m.text(); if (/^(cell|subject|shape|total) /.test(t)) lines.push(t.slice(0, 160)); };
 		page.on("console", onLog);
 		try {
 			await page.evaluate(async (url) => {

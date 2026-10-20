@@ -50,4 +50,4 @@ jobs:
           echo "::notice title=OCR ${{ matrix.engine }}::$RESULT"
           grep -E '^(FAIL|page errors)' result.txt | head -20 | while IFS= read -r l; do echo "::warning title=OCR ${{ matrix.engine }}::$l"; done || true
           # Reader debug lines for the first failures, one annotation each (max 25)
-          awk '/^DEBUG /{f=$2} /^  /{print f" "$0}' result.txt | grep -E "shape|cell \[\"" | head -25 | while IFS= read -r l; do echo "::notice title=debug ${{ matrix.engine }}::$l"; done || true
+          awk '/^DEBUG /{f=$2} /^  /{print f" "$0}' result.txt | grep -E "subject|total|shape|cell" | head -40 | while IFS= read -r l; do echo "::notice title=debug ${{ matrix.engine }}::$l"; done || true
