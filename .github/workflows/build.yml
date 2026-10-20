@@ -1,0 +1,92 @@
+name: Build GCalc
+
+# Runs on every push to main, or by hand from the Actions tab.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Optional: a fixed signing key so new versions install over old ones.
+      # Add repository secrets KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD to enable.
+      - name: Restore signing key
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/gcalc.jks"
+          echo "GCALC_KEYSTORE_PATH=$RUNNER_TEMP/gcalc.jks" >> "$GITHUB_ENV"
+
+      - name: Build APK
+        working-directory: android
+        env:
+          GCALC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          GCALC_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          GCALC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GCALC_VERSION_CODE: ${{ github.run_number }}
+          GCALC_VERSION_NAME: 1.0.${{ github.run_number }}
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk GCalc.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GCalc-apk
+          path: GCalc.apk
+
+      # Publishes the APK on the repo's Releases page so it can be downloaded straight from a phone.
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: GCalc 1.0.${{ github.run_number }}
+          make_latest: true
+          files: GCalc.apk
+          body: |
+            Download **GCalc.apk** below on your Android phone and open it to install.
+            iPhone: open the web app link from the README in Safari, then Share > Add to Home Screen.
+
+  web:
+    name: Web app (GitHub Pages, for iPhone)
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: www
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+	<title>GCalc</title>
+	<meta name="description" content="Compute your GWA quickly. Made for CLSU students." />
+	<meta name="theme-color" content="#1E2B4D" />
+	<meta name="color-scheme" content="dark light" />
+
+	<!-- Installable app (Android "Install app", iPhone "Add to Home Screen") -->
+	<link rel="manifest" href="manifest.webmanifest" />
+	<meta name="mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-title" content="GCalc" />
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+	<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+	<link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+	<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+
+	<link rel="preload" href="fonts/Outfit.ttf" as="font" type="font/ttf" crossorigin />
+	<link rel="stylesheet" href="app.css" />
+</head>
+<body class="theme-dark">
+	<main class="page">
+		<div class="container">
+			<!-- Headings -->
+			<header class="heading">
+				<h1 class="title">GWA Calculator</h1>
+				<div class="theme-switch">
+					<span class="theme-label" id="theme-label">Theme</span>
+					<label class="switch">
+						<input type="checkbox" id="theme-toggle" role="switch" aria-labelledby="theme-label" />
+						<span class="slider"></span>
+					</label>
+				</div>
+			</header>
+
+			<!-- Result Section -->
+			<section class="card result-card" aria-live="polite">
+				<p class="result" id="result">0</p>
+				<p class="academic" id="academic"></p>
+			</section>
+
+			<!-- Grades and units -->
+			<section class="card input-card">
+				<div class="rows" id="rows"></div>
+				<button type="button" class="add-btn" id="add-btn">Add</button>
+			</section>
+		</div>
+
+		<footer class="footer">
+			<a href="https://aaronjay30.github.io/aaronjay_portfolio/" target="_blank" rel="noopener">© Aaron Jay Gabato. Buy me a Coffee! ☕</a>
+		</footer>
+	</main>
+
+	<script src="app.js"></script>
+</body>
+</html>

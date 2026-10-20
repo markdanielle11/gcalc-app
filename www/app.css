@@ -1,0 +1,357 @@
+/* GCalc mobile app styles.
+   Colors, sizes and radii are carried over from the original web version
+   (tailwind.config.js + Tailwind defaults) so the app looks the same. */
+
+@font-face {
+	font-family: "Outfit";
+	src: url("fonts/Outfit.ttf") format("truetype");
+	font-weight: 100 900;
+	font-display: swap;
+}
+
+:root {
+	--danger-1: #CA0000;
+	--danger-2: #7A0000;
+	--radius-lg: 0.5rem;   /* rounded-lg: inputs and buttons */
+	--radius-xl: 0.75rem;  /* rounded-xl: cards */
+}
+
+body.theme-dark {
+	--content: #DAE2F1;
+	--background: #1E2B4D;
+	--primary: #1A1F32;
+	--accent-1: #C39A32;
+	--accent-2: #A17D21;
+	--on-accent: #0E1625;
+	--focus: #C39A32;
+	color-scheme: dark;
+}
+
+body.theme-light {
+	--content: #0E1625;
+	--background: #D9E2FC;
+	--primary: #CDD1E5;
+	--accent-1: #0234CA;
+	--accent-2: #012389;
+	--on-accent: #DAE2F1;
+	--focus: #0234CA;
+	color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	-webkit-text-size-adjust: 100%;
+	-webkit-tap-highlight-color: transparent;
+}
+
+body {
+	margin: 0;
+	padding: 0;
+	font-family: "Outfit", system-ui, sans-serif;
+	background: var(--background);
+	color: var(--content);
+	overflow-x: hidden;
+	overscroll-behavior-y: none;
+}
+
+h1,
+p {
+	margin: 0;
+}
+
+/* Layout: centered column like the original (min-h-screen, items-center) */
+.page {
+	min-height: 100vh;
+	min-height: 100dvh;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding:
+		calc(env(safe-area-inset-top, 0px) + 1rem)
+		calc(env(safe-area-inset-right, 0px) + 0px)
+		calc(env(safe-area-inset-bottom, 0px) + 1rem)
+		calc(env(safe-area-inset-left, 0px) + 0px);
+}
+
+.container {
+	width: 100%;
+	max-width: 48rem;
+	padding: 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: 2rem;
+}
+
+.heading {
+	display: flex;
+	flex-direction: row;
+	justify-content: space-between;
+	align-items: center;
+	gap: 1rem;
+}
+
+.title {
+	font-size: 1.5rem;
+	line-height: 2rem;
+	font-weight: 600;
+}
+
+.theme-switch {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: 1rem;
+}
+
+.theme-label {
+	font-weight: 400;
+	text-transform: uppercase;
+	font-size: 0.75rem;
+	line-height: 1rem;
+}
+
+.card {
+	width: 100%;
+	padding: 1.5rem;
+	border-radius: var(--radius-xl);
+	background: var(--primary);
+}
+
+@media (min-width: 640px) {
+	.card {
+		padding: 2.5rem;
+	}
+}
+
+.result {
+	display: flex;
+	justify-content: flex-end;
+	font-size: 3rem;
+	line-height: 1;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
+}
+
+.academic {
+	display: flex;
+	justify-content: flex-end;
+	min-height: 1.5rem;
+	margin-top: 1rem;
+	margin-bottom: -1rem;
+	font-size: 1rem;
+	line-height: 1.5rem;
+	opacity: 0.65;
+}
+
+.rows {
+	display: flex;
+	flex-direction: column;
+	gap: 1rem;
+}
+
+.row {
+	display: flex;
+	flex-direction: row;
+	gap: 0.75rem;
+	width: 100%;
+}
+
+.select {
+	min-width: 0;
+	min-height: 3rem;
+	padding: 0.75rem 2.25rem 0.75rem 1rem;
+	border: 0;
+	border-radius: var(--radius-lg);
+	background-color: var(--background);
+	color: var(--content);
+	font: inherit;
+	font-size: 1rem; /* 16px keeps iOS from zooming in on tap */
+	appearance: none;
+	-webkit-appearance: none;
+	background-image:
+		linear-gradient(45deg, transparent 50%, currentColor 50%),
+		linear-gradient(135deg, currentColor 50%, transparent 50%);
+	background-position:
+		right 1.15rem center,
+		right 0.8rem center;
+	background-size: 0.35rem 0.35rem, 0.35rem 0.35rem;
+	background-repeat: no-repeat;
+}
+
+.select-grade {
+	flex: 3 1 0;
+}
+
+.select-units {
+	flex: 2 1 0;
+}
+
+.select.is-empty {
+	color: color-mix(in srgb, var(--content) 70%, transparent);
+}
+
+.delete-btn {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 3rem;
+	min-height: 3rem;
+	padding: 0.75rem 1rem;
+	border: 0;
+	border-radius: var(--radius-lg);
+	background: var(--danger-1);
+	color: #DAE2F1;
+	cursor: pointer;
+}
+
+.delete-btn svg {
+	width: 1rem;
+	height: 1rem;
+	fill: currentColor;
+}
+
+.add-btn {
+	width: 100%;
+	min-height: 3rem;
+	margin-top: 2rem;
+	padding: 0.5rem 0.75rem;
+	border: 0;
+	border-radius: var(--radius-lg);
+	background: var(--accent-1);
+	color: var(--on-accent);
+	font: inherit;
+	font-size: 1.125rem;
+	line-height: 1.75rem;
+	cursor: pointer;
+}
+
+.footer {
+	width: 100%;
+	max-width: 48rem;
+	padding: 1.5rem 1rem 0;
+	text-align: right;
+	font-size: 0.875rem;
+}
+
+.footer a {
+	color: inherit;
+	text-decoration: none;
+}
+
+/* Focus rings for keyboard and switch-access users */
+.select:focus-visible,
+.add-btn:focus-visible,
+.delete-btn:focus-visible,
+.footer a:focus-visible,
+.switch input:focus-visible + .slider {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+
+@media (hover: hover) {
+	.add-btn:hover {
+		background: var(--accent-2);
+	}
+
+	.delete-btn:hover {
+		background: var(--danger-2);
+	}
+}
+
+/* Tap feedback */
+.add-btn:active,
+.delete-btn:active {
+	transform: scale(0.98);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	body,
+	.card,
+	.select,
+	.add-btn,
+	.delete-btn {
+		transition:
+			background-color 0.3s ease,
+			color 0.3s ease,
+			transform 0.1s ease;
+	}
+
+	.row-new {
+		animation: row-in 0.2s ease-out;
+	}
+
+	@keyframes row-in {
+		from {
+			opacity: 0;
+			transform: translateY(-4px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+}
+
+/* Theme switch (unchanged from the original ThemeSwitch.css) */
+.switch {
+	font-size: 17px;
+	position: relative;
+	display: inline-block;
+	width: 3.5em;
+	height: 1.5em;
+}
+
+.switch input {
+	position: absolute;
+	inset: 0;
+	opacity: 0;
+	width: 100%;
+	height: 100%;
+	margin: 0;
+	z-index: 1;
+	cursor: pointer;
+}
+
+.slider {
+	--track: #191F32;
+	position: absolute;
+	inset: 0;
+	background-color: var(--track);
+	border-radius: 30px;
+}
+
+.slider::before {
+	position: absolute;
+	content: "";
+	height: 1em;
+	width: 1em;
+	border-radius: 50%;
+	left: 10%;
+	bottom: 15%;
+	box-shadow: inset 8px -4px 0 0 #fff000;
+	background: var(--track);
+}
+
+.switch input:checked + .slider {
+	background-color: hsl(220, 35%, 60%);
+}
+
+.switch input:checked + .slider::before {
+	transform: translateX(180%);
+	box-shadow: inset 15px -4px 0 15px #fff000;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.slider,
+	.slider::before {
+		transition: 0.5s;
+	}
+}
