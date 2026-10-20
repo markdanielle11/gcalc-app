@@ -680,7 +680,7 @@
 				if (window.GCALC_DEBUG) console.log("native lines: " + JSON.stringify((layout.lines || []).map(function (l) { return l.text; })));
 				if (aiRows.length) {
 					report(1, "Done");
-					return { rows: aiRows, mode: "ai" };
+					return { rows: aiRows, mode: "ai", layout: window.GCALC_DEBUG ? layout : undefined };
 				}
 			} catch (e) {
 				if (window.GCALC_DEBUG) console.log("native reader failed: " + e.message);

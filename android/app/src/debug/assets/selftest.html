@@ -77,6 +77,11 @@
 			var ok = JSON.stringify(got) === JSON.stringify(expected);
 			// Inside the Android app the AI cases must really use the on-device AI reader.
 			if (!forceTesseract && window.GCalcAndroid && res.mode !== "ai") ok = false;
+			if (!ok && res.layout) {
+				done("GCALC_CASE " + label + "-lines " + JSON.stringify(res.layout.lines.map(function (l) {
+					return [l.text, l.box].concat(l.elements.length > 1 ? [l.elements.map(function (e) { return e.text + "@" + e.box.join(","); })] : []);
+				})).slice(0, 3000));
+			}
 			done("GCALC_CASE " + label + " " + (ok ? "PASS" : "FAIL") + " " + res.mode + " " + (Date.now() - t0) + "ms " + JSON.stringify(got));
 			return ok;
 		} catch (e) {
