@@ -22,6 +22,40 @@
 	var CODE = /\b([A-Z][A-Z&]{1,11})\s*-?\s*(\d{1,4}[A-Z]?)\b/;
 	var NOT_A_SUBJECT = /^(NO|SY|AY|ST|ND|RD|SEM|SEMESTER|YEAR|PAGE|ROOM|SECTION|TOTAL|GWA|UNITS|GRADE|GRADES|REMARKS|STATUS|SUBJECTS|SUBJECT|PASSED|FAILED|SUBMITTED|APPROVED|YET|NOT|PM|AM)$/;
 
+	// Subject code prefixes at CLSU (from the portal's public subject schedule,
+	// plus a few older ones). Used to fix a dropped or misread letter:
+	// "COMSC" -> "COMSCI", "PATHEIT" -> "PATHFIT".
+	var KNOWN_PREFIXES = {};
+	("AA AB ABEN ACCT ACCTG AE AECON AENGR AG AGBIO AGBUS AGECON AGEXT AGMGT AGRIC AGRICULTURE AGRON AM ANSCI AP APPLIED AQ AQPH AQUA AREM ARTS AS BA BACC BAFIL BCAED BIO BIOL BLAW BOT BOTA BPED BSCI BTECH BTLED CAED CBMEC CE CENGR CHEM CHEMED CHEMISTRY CMENGR COMFUN COMM COMMUNICATIONS COMSCI CP CPE CPROT CRSCI CS DC EAPP EC ECED ECON ED EDUC EED EENGR ELECTIVE ELEM EM ENC ENG ENGL ENGLISH ENGR ENSCI ENTOM ENTREP ENVSC ENVSCI ENVST ESP EXED FILDIS FILI FILIPINO FILKOM FILLIT FILSOS FINMA FISH FL FLDS FTECH FTTFD FTTFM GEL GENMATH GENSCI GEO GU HE HEALTH HEED HISTO HM HO HORTI HOSPM HRDM HT HUMANITIES ICT INTECH IS ISFL ISGE ITAB ITCAP ITELEC ITPRAC ITRM LANG LCS LITERATURE LITT LL MA MAPEH MATH MATHED MATHEMATICS MEM MENGR METEOR MICRO MIL MKTG MNGT MS MUSIC NSTP OUTLINE PATHFIT PB PBREED PE PEH PERDEV PHILI PHILO PHILOSOPHY PHYS PHYSICS POLSCI PPATH PR PSYCH RD RES RESEARCH SCIED SCIENCE SED SEDELFIL SEDENG SEDFILI SEDMATH SEDSCI SEDSS SEDVED SFP SHP SO SOCIO SOCSCI SOCSI SOILS SPS STAT SW TAXN TFTEC TFTFD TFTFM THESIS TLEAFA TLEHE TLEIA TLSED TM TOURM TR VANA VCLIN VMED VMICR VPARA VPATH VPH VPHAR VPHYS VPM VSCI VSURG WA ZOOL ZOOT GEC GEE FIL HIST IT AGRI DRAW CRIM NURS").split(" ").forEach(function (p) { KNOWN_PREFIXES[p] = true; });
+
+	function editDistanceAtMost1(a, b) {
+		if (a === b) return true;
+		var la = a.length, lb = b.length;
+		if (Math.abs(la - lb) > 1) return false;
+		var i = 0, j = 0, edits = 0;
+		while (i < la && j < lb) {
+			if (a[i] === b[j]) { i++; j++; continue; }
+			if (++edits > 1) return false;
+			if (la > lb) i++;
+			else if (lb > la) j++;
+			else { i++; j++; }
+		}
+		return edits + (la - i) + (lb - j) <= 1;
+	}
+
+	// When two known prefixes are equally close, the common general-education
+	// ones win ("PHIL" -> "PHILI", not "PHILO").
+	var COMMON_PREFIXES = ["PHILI", "PATHFIT", "NSTP", "GEC", "MATH", "ENGL", "STAT", "COMSCI", "INTECH", "ITRM", "PSYCH", "CHEM", "BIO", "PHYS", "FILI"];
+
+	/* A known prefix as is, or the only (or most common) known prefix one letter away. */
+	function fixPrefix(p) {
+		if (KNOWN_PREFIXES[p] || p.length < 3) return p;
+		var near = Object.keys(KNOWN_PREFIXES).filter(function (k) { return k.length >= 3 && editDistanceAtMost1(p, k); });
+		if (near.length === 1) return near[0];
+		var common = near.filter(function (k) { return COMMON_PREFIXES.indexOf(k) >= 0; });
+		return common.length === 1 ? common[0] : p;
+	}
+
 	var libPromise = null;
 
 	function loadLibrary() {
@@ -518,7 +552,15 @@
 	function matchCode(text) {
 		var m = CODE.exec(text);
 		if (!m || NOT_A_SUBJECT.test(m[1])) return null;
-		return { name: m[1] + " " + m[2].toUpperCase(), index: m.index, length: m[0].length };
+		var name = m[1] + " " + m[2].toUpperCase();
+		var length = m[0].length;
+		// A laboratory part keeps its own row: "CRSCI 1100 LAB A" next to "CRSCI 1100".
+		var lab = /^\s*-?\s*LAB\s*([A-Z])?(?![A-Za-z])/.exec(text.slice(m.index + length));
+		if (lab) {
+			name += " LAB" + (lab[1] ? " " + lab[1] : "");
+			length += lab[0].length;
+		}
+		return { name: name, index: m.index, length: length };
 	}
 
 	function makeRow(name, units, grade) {
@@ -605,7 +647,7 @@
 			}
 			if (!m || m.index > 3) continue;
 			var parts = m.name.split(" ");
-			[[letters, parts[0]], [numbers, parts[1]]].forEach(function (pair) {
+			[[letters, parts[0]], [numbers, parts.slice(1).join(" ")]].forEach(function (pair) {
 				var v = pair[0][pair[1]] || (pair[0][pair[1]] = { count: 0, conf: 0 });
 				v.count += weight;
 				v.conf = Math.max(v.conf, r.conf);
@@ -625,7 +667,11 @@
 			});
 			return bestKey;
 		}
-		var name = Object.keys(letters).length ? pick(letters) + " " + pick(numbers) : null;
+		// Readings that are a known prefix outvote ones that aren't.
+		var known = {};
+		Object.keys(letters).forEach(function (k) { if (KNOWN_PREFIXES[k]) known[k] = letters[k]; });
+		var prefix = Object.keys(known).length ? pick(known) : Object.keys(letters).length ? fixPrefix(pick(letters)) : null;
+		var name = prefix ? prefix + " " + pick(numbers) : null;
 		if (window.GCALC_DEBUG) console.log("subject " + JSON.stringify(raw) + " -> " + name);
 		return name;
 	}
@@ -1019,7 +1065,8 @@
 					if (++tried > 3) break; // no code in the first cells: not a subject row
 					var m = matchCode(text) || matchCode(text.toUpperCase().replace(/[^A-Z0-9& ]/g, ""));
 					if (m && m.index <= 3) {
-						name = m.name;
+						var mp = m.name.split(" ");
+						name = fixPrefix(mp[0]) + " " + mp.slice(1).join(" ");
 					} else if (cell && /[A-Za-z]{2}/.test(text) && /\d/.test(text)) {
 						// Looks like a code the AI garbled: let Tesseract try this cell.
 						name = await readSubject(await getTesseract(), cell);

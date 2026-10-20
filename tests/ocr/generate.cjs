@@ -39,7 +39,12 @@ const DATASETS = {
 		["CHEM 2391L", 1, "1.25", "PASSED", "FINAL GRADE", 1.25], ["PHYS 2100", 4, "2.50", "PASSED", "FINAL GRADE", 2.5],
 		["AGRI 1100", 2, "1.00", "PASSED", "FINAL GRADE", 1], ["ECON 2200", 3, "2.00", "PASSED", "FINAL GRADE", 2],
 		["HIST 1100", 3, "1.75", "PASSED", "FINAL GRADE", 1.75], ["FIL 1100", 3, "2.25", "PASSED", "FINAL GRADE", 2.25],
-		["DRAW 1010", 1, "3.00", "PASSED", "FINAL GRADE", 3]] }
+		["DRAW 1010", 1, "3.00", "PASSED", "FINAL GRADE", 3]] },
+	// Lecture and lab parts of the same course, as in the public subject schedule
+	lablec: { sem: "1ST SEMESTER 2025-2026", rows: [
+		["CRSCI 1100", 2, "1.50", "PASSED", "FINAL GRADE", 1.5], ["CRSCI 1100 LAB A", 1, "1.25", "PASSED", "FINAL GRADE", 1.25],
+		["ANSCI 1100", 2, "2.00", "PASSED", "FINAL GRADE", 2], ["ANSCI 1100 LAB B", 1, "1.75", "PASSED", "FINAL GRADE", 1.75],
+		["SOILS 2100", 3, "2.25", "PASSED", "FINAL GRADE", 2.25], ["ENGL 1100", 3, "1.00", "PASSED", "FINAL GRADE", 1]] }
 };
 
 // chrome: phone UI drawn over the page ("android" status bar, "ios" Safari bottom bar)
