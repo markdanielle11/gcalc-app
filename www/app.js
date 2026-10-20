@@ -663,7 +663,17 @@
 		});
 	}
 
+	// Start the text reader while the person picks a screenshot.
+	function warmUpReader() {
+		try {
+			if (window.GCalcOCR && window.GCalcOCR.warmUp) window.GCalcOCR.warmUp();
+		} catch (e) {
+			/* the scan starts its own reader */
+		}
+	}
+
 	els.importBtn.addEventListener("click", function () {
+		warmUpReader();
 		els.importInput.value = "";
 		els.importInput.click();
 	});
@@ -675,6 +685,7 @@
 
 	els.importPrimary.addEventListener("click", function () {
 		if (els.importPrimary.dataset.action === "retry") {
+			warmUpReader();
 			els.importInput.value = "";
 			els.importInput.click();
 		} else {

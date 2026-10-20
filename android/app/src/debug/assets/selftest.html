@@ -82,7 +82,7 @@
 					return [l.text, l.box].concat(l.elements.length > 1 ? [l.elements.map(function (e) { return e.text + "@" + e.box.join(","); })] : []);
 				})).slice(0, 3000));
 			}
-			done("GCALC_CASE " + label + " " + (ok ? "PASS" : "FAIL") + " " + res.mode + " " + (Date.now() - t0) + "ms " + JSON.stringify(got));
+			done("GCALC_CASE " + label + " " + (ok ? "PASS" : "FAIL") + " " + res.mode + " " + (Date.now() - t0) + "ms " + JSON.stringify(res.timing || {}) + " " + JSON.stringify(got));
 			return ok;
 		} catch (e) {
 			done("GCALC_CASE " + label + " FAIL error " + (e && (e.message || e)));
@@ -119,7 +119,7 @@
 		window.GCALC_DEBUG = false;
 		// Every other screenshot, and at most 12 minutes, so CI stays fast.
 		list = list.filter(function (x, i) { return i % 2 === 0; });
-		var pass = 0, times = 0, started = Date.now(), ran = 0;
+		var pass = 0, times = 0, started = Date.now(), ran = 0, steps = {};
 		for (var i = 0; i < list.length; i++) {
 			if (Date.now() - started > 12 * 60 * 1000) break;
 			ran++;
@@ -128,6 +128,7 @@
 				var blob = await (await fetch("corpus/" + item.file)).blob();
 				var res = await window.GCalcOCR.read(blob, function () {});
 				var problems = score(item, res.rows);
+				Object.keys(res.timing || {}).forEach(function (k) { (steps[k] = steps[k] || []).push(res.timing[k]); });
 				if (res.mode !== "ai") problems.unshift("mode " + res.mode);
 				if (problems.length) done("GCALC_CORPUS_FAIL " + item.file + ": " + problems.join("; "));
 				else pass++;
@@ -136,7 +137,9 @@
 			}
 			times += Date.now() - t0;
 		}
-		done("GCALC_CORPUS ai " + pass + "/" + ran + " fully correct, avg " + Math.round(times / Math.max(1, ran)) + "ms");
+		done("GCALC_CORPUS ai " + pass + "/" + ran + " fully correct, avg " + Math.round(times / Math.max(1, ran)) + "ms (" + Object.keys(steps).map(function (k) {
+			return k + " " + Math.round(steps[k].reduce(function (a, b) { return a + b; }, 0) / steps[k].length);
+		}).join(", ") + ")");
 	}
 
 	(async function () {

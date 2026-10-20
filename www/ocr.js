@@ -74,6 +74,94 @@
 		return libPromise;
 	}
 
+	/* One reader, started early (when the Import button is tapped, while the
+	   person is still picking a screenshot) and kept for the next scan, so a
+	   scan doesn't wait for the reader to start. Closed after a while unused. */
+	var shared = null;
+	var IDLE_MS = 120000;
+
+	function newWorker() {
+		return loadLibrary().then(function (T) {
+			return T.createWorker("eng", 1, {
+				workerPath: BASE + "worker.min.js",
+				corePath: BASE + "core",
+				langPath: BASE + "lang",
+				gzip: false,
+				cacheMethod: "none",
+				workerBlobURL: false
+			});
+		});
+	}
+
+	function closeWorker(promise) {
+		promise.then(function (w) { return w.terminate(); }).catch(function () { /* already gone */ });
+	}
+
+	function idleClose(s) {
+		clearTimeout(s.timer);
+		s.timer = setTimeout(function () {
+			if (shared === s && !s.busy) {
+				shared = null;
+				closeWorker(s.promise);
+			}
+		}, IDLE_MS);
+	}
+
+	function startShared() {
+		var s = { promise: newWorker(), busy: false, timer: 0 };
+		s.promise.catch(function () { if (shared === s) shared = null; });
+		shared = s;
+		return s;
+	}
+
+	function warmUp() {
+		try {
+			var s = shared || startShared();
+			if (!s.busy) idleClose(s);
+		} catch (e) {
+			/* the scan will start its own reader */
+		}
+	}
+
+	/* A reader for one scan, set up like a new one. The shared reader if it's
+	   free; a separate one if another scan is still using it. */
+	async function takeWorker() {
+		var s = shared && !shared.busy ? shared : !shared ? startShared() : null;
+		var handle = s ? { s: s } : { own: newWorker() };
+		if (s) {
+			s.busy = true;
+			clearTimeout(s.timer);
+		}
+		try {
+			var w = await (s ? s.promise : handle.own);
+			await w.setParameters({ preserve_interword_spaces: "1", tessedit_char_whitelist: WHITELIST, tessedit_pageseg_mode: "6" });
+			handle.worker = w;
+			return handle;
+		} catch (e) {
+			giveWorker(handle, true);
+			throw e;
+		}
+	}
+
+	/* broken: the reader failed (out of memory, say), so don't use it again. */
+	function giveWorker(handle, broken) {
+		if (!handle) return;
+		if (handle.own) {
+			closeWorker(handle.own);
+			return;
+		}
+		var s = handle.s;
+		s.busy = false;
+		if (broken) {
+			if (shared === s) shared = null;
+			closeWorker(s.promise);
+		} else if (shared === s) {
+			idleClose(s);
+		} else {
+			closeWorker(s.promise);
+		}
+	}
+
 	function loadImage(file) {
 		return new Promise(function (resolve, reject) {
 			var url = URL.createObjectURL(file);
@@ -1271,37 +1359,41 @@
 	async function read(file, onProgress) {
 		var report = typeof onProgress === "function" ? onProgress : function () {};
 		report(0.02, "Opening image");
+		// How long each step took (ms), for the speed tests.
+		var timing = {}, last = Date.now();
+		function lap() {
+			var now = Date.now(), ms = now - last;
+			last = now;
+			return ms;
+		}
 
 		// Android app: Google's on-device text recognition is the most accurate.
 		if (hasNativeReader() && !window.GCALC_FORCE_TESSERACT) {
-			var aiWorker = null;
+			var aiHandle = null, aiBroken = false;
 			try {
 				var aiImg = await loadImage(file);
 				var aiPrep = prepare(aiImg);
+				timing.prepare = lap();
 				if (aiPrep.grid) {
 					report(0.25, "Reading text");
 					var gridLayout = await readNativeBase64(grayCanvas(aiPrep).toDataURL("image/png").split(",")[1]);
+					timing.ai = lap();
 					var getTesseract = async function () {
-						if (!aiWorker) {
-							var T0 = await loadLibrary();
-							aiWorker = await T0.createWorker("eng", 1, {
-								workerPath: BASE + "worker.min.js", corePath: BASE + "core", langPath: BASE + "lang",
-								gzip: false, cacheMethod: "none", workerBlobURL: false
-							});
-							await aiWorker.setParameters({ preserve_interword_spaces: "1", tessedit_char_whitelist: WHITELIST });
-						}
-						return aiWorker;
+						if (!aiHandle) aiHandle = await takeWorker();
+						return aiHandle.worker;
 					};
 					var tableRows = await readTableAI(aiPrep, gridLayout, getTesseract, report);
+					timing.check = lap();
 					if (tableRows.length) {
 						report(1, "Done");
-						return { rows: tableRows, mode: "ai", layout: window.GCALC_DEBUG ? gridLayout : undefined };
+						return { rows: tableRows, mode: "ai", timing: timing, layout: window.GCALC_DEBUG ? gridLayout : undefined };
 					}
 				}
 			} catch (e) {
+				aiBroken = isMemoryError(e);
 				if (window.GCALC_DEBUG) console.log("AI table mode failed: " + e.message);
 			} finally {
-				if (aiWorker) aiWorker.terminate();
+				giveWorker(aiHandle, aiBroken);
 			}
 			try {
 				report(0.3, "Reading text");
@@ -1310,7 +1402,8 @@
 				if (window.GCALC_DEBUG) console.log("native lines: " + JSON.stringify((layout.lines || []).map(function (l) { return l.text; })));
 				if (aiRows.length) {
 					report(1, "Done");
-					return { rows: aiRows, mode: "ai", layout: window.GCALC_DEBUG ? layout : undefined };
+					timing.ai2 = lap();
+					return { rows: aiRows, mode: "ai", timing: timing, layout: window.GCALC_DEBUG ? layout : undefined };
 				}
 			} catch (e) {
 				if (window.GCALC_DEBUG) console.log("native reader failed: " + e.message);
@@ -1318,60 +1411,62 @@
 			report(0.05, "Trying another way");
 		}
 
-		var loaded = await Promise.all([loadLibrary(), loadImage(file)]);
+		// Start the reader while the image is opened and prepared.
+		var handlePromise = takeWorker();
+		handlePromise.catch(function () { /* reported below */ });
+		var img = await loadImage(file).catch(function (e) {
+			handlePromise.then(function (h) { giveWorker(h, false); }, function () {});
+			throw e;
+		});
 		try {
-			return await readWithTesseract(loaded[0], loaded[1], report);
+			return await readWithTesseract(handlePromise, img, report, timing, lap);
 		} catch (err) {
 			// Safari can run the reader out of memory on very tall screenshots:
 			// start a fresh reader on a smaller copy and try once more.
-			if (!/memory|bounds|abort|RuntimeError/i.test(String(err && (err.message || err)))) throw err;
+			if (!isMemoryError(err)) throw err;
 			report(0.1, "Trying again");
-			return await readWithTesseract(loaded[0], loaded[1], report, 5e6);
+			return await readWithTesseract(takeWorker(), img, report, timing, lap, 5e6);
 		}
 	}
 
-	async function readWithTesseract(T, img, report, maxPixels) {
-		var worker = null;
+	function isMemoryError(err) {
+		return /memory|bounds|abort|RuntimeError/i.test(String(err && (err.message || err)));
+	}
+
+	async function readWithTesseract(handlePromise, img, report, timing, lap, maxPixels) {
+		var handle = null, broken = false;
 		try {
 			var prep = prepare(img, maxPixels);
+			timing.prepare = lap();
 			report(0.1, "Starting the reader");
-			worker = await T.createWorker("eng", 1, {
-				workerPath: BASE + "worker.min.js",
-				corePath: BASE + "core",
-				langPath: BASE + "lang",
-				gzip: false,
-				cacheMethod: "none",
-				workerBlobURL: false
-			});
-			await worker.setParameters({
-				preserve_interword_spaces: "1",
-				tessedit_char_whitelist: WHITELIST
-			});
+			handle = await handlePromise;
+			var worker = handle.worker;
+			timing.start = lap();
 			report(0.25, "Reading text");
 
 			if (prep.grid) {
 				var tableRows = await readTable(worker, prep, report);
+				timing.table = lap();
 				if (tableRows.length) {
 					report(1, "Done");
-					return { rows: tableRows, mode: "table" };
+					return { rows: tableRows, mode: "table", timing: timing };
 				}
 			}
 
 			report(0.5, "Reading text");
-			await worker.setParameters({ tessedit_pageseg_mode: "6" });
+			await worker.setParameters({ tessedit_pageseg_mode: "6", tessedit_char_whitelist: WHITELIST });
 			var result = await worker.recognize(prep.canvas);
+			timing.lines = lap();
 			report(1, "Done");
-			return { rows: parse(result.data.text || ""), mode: "lines" };
+			return { rows: parse(result.data.text || ""), mode: "lines", timing: timing };
+		} catch (e) {
+			broken = isMemoryError(e);
+			if (!handle) handlePromise.then(function (h) { giveWorker(h, broken); }, function () {});
+			throw e;
 		} finally {
-			if (worker) {
-				try {
-					await worker.terminate();
-				} catch (e) {
-					/* already gone */
-				}
-			}
+			giveWorker(handle, broken);
 		}
 	}
 
-	window.GCalcOCR = { read: read, parse: parse, parseLayout: parseLayout, _prepare: prepare, _cropCell: cropCell, _shapeRead: shapeRead, _drawCandidate: drawCandidate, _loadGlyphFont: loadGlyphFont };
+	window.GCalcOCR = { read: read, warmUp: warmUp, parse: parse, parseLayout: parseLayout, _prepare: prepare, _cropCell: cropCell, _shapeRead: shapeRead, _drawCandidate: drawCandidate, _loadGlyphFont: loadGlyphFont };
 })();

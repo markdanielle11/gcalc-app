@@ -71,6 +71,7 @@ function score(item, rows) {
 	let pass = 0;
 	const fails = [];
 	const times = [];
+	const steps = {};
 	let count = 0;
 	for (const item of expected) {
 		// A student imports a few screenshots per visit; start a fresh page every
@@ -82,7 +83,7 @@ function score(item, rows) {
 			res = await page.evaluate(async (url) => {
 				const blob = await (await fetch(url)).blob();
 				const r = await window.GCalcOCR.read(blob);
-				return { mode: r.mode, rows: r.rows.map((x) => ({ name: x.name, units: x.units, grades: x.grades })) };
+				return { mode: r.mode, timing: r.timing, rows: r.rows.map((x) => ({ name: x.name, units: x.units, grades: x.grades })) };
 			}, base + "/corpus/" + item.file);
 		} catch (e) {
 			res = { mode: "error", rows: [], error: e.message.split("\n")[0].slice(0, 200) };
@@ -90,6 +91,7 @@ function score(item, rows) {
 			await freshPage().catch(() => {});
 		}
 		times.push(Date.now() - t0);
+		if (res.timing) for (const k in res.timing) (steps[k] = steps[k] || []).push(res.timing[k]);
 		const problems = res.error ? ["error: " + res.error] : score(item, res.rows);
 		if (problems.length) fails.push({ file: item.file, mode: res.mode, problems });
 		else pass++;
@@ -112,7 +114,8 @@ function score(item, rows) {
 		console.log(`DEBUG ${f.file}:\n  ` + lines.join("\n  "));
 	}
 	const avg = Math.round(times.reduce((a, b) => a + b, 0) / Math.max(1, times.length));
-	console.log(`${engine}: ${pass}/${expected.length} screenshots fully correct, avg ${avg}ms`);
+	const stepAvg = Object.keys(steps).map((k) => `${k} ${Math.round(steps[k].reduce((a, b) => a + b, 0) / steps[k].length)}`).join(", ");
+	console.log(`${engine}: ${pass}/${expected.length} screenshots fully correct, avg ${avg}ms (${stepAvg}; first scan ${times[0]}ms)`);
 	if (errors.length) console.log("page errors:", errors.slice(0, 5));
 	await browser.close();
 	server.close();
