@@ -33,6 +33,17 @@
 		{ name: "College Scholar", max: 1.75 },
 		{ name: "University Scholar", max: 1.5 }
 	];
+	// Each honor has its own metal and mark: University Scholar (gold, crown) above
+	// College Scholar (silver, medal) above Dean's Lister (bronze, seal).
+	var TIERS = {
+		"University Scholar": { key: "us", icon: "crown", a: "#F7DB82", b: "#D3A23A", c: "#8F6614", glow: "rgba(234,188,74,0.34)", ink: "#2B1F05",
+			path: "M239.75,90.81c0,.11,0,.21-.07.32L217,195a16,16,0,0,1-15.72,13H54.71A16,16,0,0,1,39,195L16.32,91.13c0-.11-.05-.21-.07-.32A16,16,0,0,1,44,77.39l33.67,36.29,35.8-80.29a1,1,0,0,0,0-.1,16,16,0,0,1,29.06,0,1,1,0,0,0,0,.1l35.8,80.29L212,77.39a16,16,0,0,1,27.71,13.42Z" },
+		"College Scholar": { key: "cs", icon: "medal", a: "#F4F7FC", b: "#BAC4D6", c: "#78839A", glow: "rgba(198,210,232,0.26)", ink: "#182033",
+			path: "M216,96A88,88,0,1,0,72,163.83V240a8,8,0,0,0,11.58,7.16L128,225l44.43,22.21A8.07,8.07,0,0,0,176,248a8,8,0,0,0,8-8V163.83A87.85,87.85,0,0,0,216,96ZM56,96a72,72,0,1,1,72,72A72.08,72.08,0,0,1,56,96Zm16,0a56,56,0,1,1,56,56A56.06,56.06,0,0,1,72,96Z" },
+		"Dean's Lister": { key: "dl", icon: "seal", a: "#F5C9A3", b: "#C9814A", c: "#83481F", glow: "rgba(210,132,74,0.30)", ink: "#2C1608",
+			path: "M225.86,102.82c-3.77-3.94-7.67-8-9.14-11.57-1.36-3.27-1.44-8.69-1.52-13.94-.15-9.76-.31-20.82-8-28.51s-18.75-7.85-28.51-8c-5.25-.08-10.67-.16-13.94-1.52-3.56-1.47-7.63-5.37-11.57-9.14C146.28,23.51,138.44,16,128,16s-18.27,7.51-25.18,14.14c-3.94,3.77-8,7.67-11.57,9.14C88,40.64,82.56,40.72,77.31,40.8c-9.76.15-20.82.31-28.51,8S41,67.55,40.8,77.31c-.08,5.25-.16,10.67-1.52,13.94-1.47,3.56-5.37,7.63-9.14,11.57C23.51,109.72,16,117.56,16,128s7.51,18.27,14.14,25.18c3.77,3.94,7.67,8,9.14,11.57,1.36,3.27,1.44,8.69,1.52,13.94.15,9.76.31,20.82,8,28.51s18.75,7.85,28.51,8c5.25.08,10.67.16,13.94,1.52,3.56,1.47,7.63,5.37,11.57,9.14C109.72,232.49,117.56,240,128,240s18.27-7.51,25.18-14.14c3.94-3.77,8-7.67,11.57-9.14,3.27-1.36,8.69-1.44,13.94-1.52,9.76-.15,20.82-.31,28.51-8s7.85-18.75,8-28.51c.08-5.25.16-10.67,1.52-13.94,1.47-3.56,5.37-7.63,9.14-11.57C232.49,146.28,240,138.44,240,128S232.49,109.73,225.86,102.82Zm-52.2,6.84-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35a8,8,0,0,1,11.32,11.32Z" }
+	};
+
 	// NSTP (and its CWTS / ROTC / LTS components) is not part of the GWA.
 	var NOT_COUNTED = /^\s*(NSTP|CWTS|ROTC|LTS)(\b|\d)/i;
 
@@ -48,6 +59,7 @@
 		gwa: $("gwa"),
 		standing: $("standing"),
 		standingText: $("standing-text"),
+		standingIcon: $("standing-icon"),
 		scaleRail: $("scale-rail"),
 		subjectCount: $("subject-count"),
 		statUnits: $("stat-units"),
@@ -685,6 +697,13 @@
 		els.scaleRail.style.transform = "translateX(" + (pos * 100).toFixed(2) + "%)";
 		els.hero.classList.toggle("has-gwa", !empty);
 		els.hero.classList.toggle("is-honors", out.academic !== "");
+		var tier = TIERS[out.academic];
+		["us", "cs", "dl"].forEach(function (k) {
+			var on = !!tier && tier.key === k;
+			els.hero.classList.toggle("tier-" + k, on);
+			els.miniStanding.classList.toggle("tier-" + k, on);
+		});
+		if (tier) els.standingIcon.setAttribute("href", "#i-" + tier.icon);
 
 		els.heroLabel.textContent = state.terms.length > 1 ? cur().name + " GWA" : "Your GWA";
 		els.standingText.textContent = out.academic;
@@ -821,7 +840,9 @@
 		var ctx = canvas.getContext("2d");
 		ctx.scale(dpr, dpr);
 		var styles = window.getComputedStyle(els.root);
-		var colors = [styles.getPropertyValue("--accent").trim(), styles.getPropertyValue("--accent-text").trim(), styles.getPropertyValue("--text").trim(), "#7FA2FF", "#F2D48A"];
+		var t = TIERS[compute(cur().rows).academic];
+		var colors = t ? [t.a, t.b, t.c, t.a, styles.getPropertyValue("--text").trim()] :
+			[styles.getPropertyValue("--accent").trim(), styles.getPropertyValue("--accent-text").trim(), styles.getPropertyValue("--text").trim()];
 		var r = els.hero.getBoundingClientRect();
 		var ox = r.left + r.width / 2, oy = Math.max(40, r.top + r.height * 0.35);
 		var parts = [];
@@ -1617,114 +1638,152 @@
 		});
 	}
 
+	/* A 1080 x 1920 picture (Facebook / Instagram story size). Content stays clear of
+	   the top and bottom 250 px, where the story app puts its own buttons. */
 	function shareCard(logo) {
 		var out = compute(cur().rows);
-		var W = 1080, H = 1350, X = 96;
+		var tier = TIERS[out.academic];
+		var W = 1080, H = 1920, CX = W / 2;
 		var c = el("canvas");
 		c.width = W;
 		c.height = H;
 		var ctx = c.getContext("2d");
-		var styles = window.getComputedStyle(els.root);
-		function v(name) { return styles.getPropertyValue(name).trim(); }
-		var dark = state.isDark;
-		var g = ctx.createLinearGradient(0, 0, W, H);
-		g.addColorStop(0, dark ? "#22305A" : "#FFFFFF");
-		g.addColorStop(1, dark ? "#131B31" : "#E3E9F8");
-		ctx.fillStyle = g;
+		var font = "Outfit, system-ui, sans-serif";
+		var white = "#EEF2FA", muted = "#9DA8C3";
+
+		var bg = ctx.createLinearGradient(0, 0, 0, H);
+		bg.addColorStop(0, "#1D2950");
+		bg.addColorStop(1, "#0C1224");
+		ctx.fillStyle = bg;
 		ctx.fillRect(0, 0, W, H);
-		if (out.academic) {
-			var glow = ctx.createRadialGradient(W * 0.85, H * 0.2, 0, W * 0.85, H * 0.2, W * 0.75);
-			glow.addColorStop(0, dark ? "rgba(210,167,63,0.26)" : "rgba(2,52,202,0.12)");
-			glow.addColorStop(1, "rgba(0,0,0,0)");
-			ctx.fillStyle = glow;
+		function glow(x, y, r, color) {
+			var g = ctx.createRadialGradient(x, y, 0, x, y, r);
+			g.addColorStop(0, color);
+			g.addColorStop(1, "rgba(0,0,0,0)");
+			ctx.fillStyle = g;
 			ctx.fillRect(0, 0, W, H);
 		}
-		var text = v("--text"), muted = v("--muted"), accent = v("--accent"), accentText = v("--accent-text");
-		var field = v("--field"), zone = v("--scale-zone");
-		var font = "Outfit, system-ui, sans-serif";
+		glow(CX, tier ? 600 : 900, 760, tier ? tier.glow : "rgba(80,110,200,0.22)");
+		glow(W, H, 700, "rgba(60,90,180,0.18)");
+
+		function metal(x0, y0, x1, y1) {
+			var g = ctx.createLinearGradient(x0, y0, x1, y1);
+			g.addColorStop(0, tier.a);
+			g.addColorStop(0.5, tier.b);
+			g.addColorStop(1, tier.c);
+			return g;
+		}
+		function centered(text, y, style, fill, maxWidth) {
+			ctx.font = style;
+			ctx.fillStyle = fill;
+			ctx.textAlign = "center";
+			var size = parseInt(style.match(/(\d+)px/)[1], 10);
+			while (maxWidth && size > 28 && ctx.measureText(text).width > maxWidth) {
+				size -= 2;
+				ctx.font = style.replace(/\d+px/, size + "px");
+			}
+			ctx.fillText(text, CX, y);
+			ctx.textAlign = "left";
+		}
 
 		// Brand
+		ctx.font = "600 44px " + font;
+		var brandW = 72 + 20 + ctx.measureText("GCalc").width;
+		var bx = CX - brandW / 2;
 		if (logo) {
 			ctx.save();
-			roundRect(ctx, X, 96, 88, 88, 22);
+			roundRect(ctx, bx, 262, 72, 72, 18);
 			ctx.clip();
-			ctx.drawImage(logo, X, 96, 88, 88);
+			ctx.drawImage(logo, bx, 262, 72, 72);
 			ctx.restore();
 		}
-		ctx.fillStyle = text;
-		ctx.font = "600 46px " + font;
-		ctx.fillText("GCalc", X + (logo ? 116 : 0), 152);
+		ctx.fillStyle = white;
+		ctx.fillText("GCalc", bx + 92, 313);
 
-		// Name (shrunk to fit), then which GWA this is
 		var name = (state.name || "").trim();
-		var label = state.terms.length > 1 ? cur().name + " GWA" : name ? "GWA" : "My GWA";
-		if (name) {
-			var size = 68;
-			ctx.font = "700 " + size + "px " + font;
-			while (size > 36 && ctx.measureText(name).width > W - 2 * X) {
-				size -= 2;
-				ctx.font = "700 " + size + "px " + font;
-			}
-			ctx.fillStyle = text;
-			ctx.fillText(name, X, 320);
-		}
-		ctx.fillStyle = muted;
-		ctx.font = "500 46px " + font;
-		ctx.fillText(label, X, name ? 400 : 380);
-		ctx.fillStyle = text;
-		ctx.font = "700 290px " + font;
-		ctx.fillText(out.counted ? formatGwa(out.result) : "0.00", X - 12, 660);
-
-		if (out.academic) {
-			ctx.font = "600 50px " + font;
-			var tw = ctx.measureText(out.academic).width;
-			ctx.fillStyle = dark ? "rgba(210,167,63,0.18)" : "rgba(2,52,202,0.10)";
-			roundRect(ctx, X, 712, tw + 84, 92, 46);
+		var label = state.terms.length > 1 ? cur().name + " GWA" : "General Weighted Average";
+		var y;
+		if (tier) {
+			// The honor's emblem: a metal ring with its mark.
+			var ey = 540, r = 150;
+			ctx.beginPath();
+			ctx.arc(CX, ey, r, 0, Math.PI * 2);
+			ctx.fillStyle = "rgba(10,15,30,0.55)";
 			ctx.fill();
-			ctx.fillStyle = accentText;
-			ctx.fillText(out.academic, X + 42, 774);
+			ctx.lineWidth = 12;
+			ctx.strokeStyle = metal(CX - r, ey - r, CX + r, ey + r);
+			ctx.stroke();
+			ctx.beginPath();
+			ctx.arc(CX, ey, r - 26, 0, Math.PI * 2);
+			ctx.lineWidth = 3;
+			ctx.strokeStyle = tier.glow;
+			ctx.stroke();
+			ctx.save();
+			var size = 168;
+			ctx.translate(CX - size / 2, ey - size / 2);
+			ctx.scale(size / 256, size / 256);
+			ctx.fillStyle = metal(0, 0, 256, 256);
+			ctx.fill(new Path2D(tier.path));
+			ctx.restore();
+			if ("letterSpacing" in ctx) ctx.letterSpacing = "6px";
+			centered(out.academic.toUpperCase(), 790, "700 64px " + font, metal(CX - 400, 730, CX + 400, 800), W - 160);
+			if ("letterSpacing" in ctx) ctx.letterSpacing = "0px";
+			y = 885;
+		} else {
+			y = 760;
 		}
+		if (name) {
+			centered(name, y, "600 58px " + font, white, W - 160);
+			y += 62;
+		}
+		centered(label, y, "500 40px " + font, muted, W - 160);
+		y += 270;
+		centered(out.counted ? formatGwa(out.result) : "0.00", y, "700 260px " + font, white, W - 120);
+		y += 80;
 
-		// The 1.00 to 3.00 scale
-		var top = 900, left = X, width = W - 2 * X;
-		ctx.fillStyle = field;
-		roundRect(ctx, left, top, width, 18, 9);
+		// Where the GWA sits between 1.00 and 3.00, honors cutoffs marked.
+		var left = 160, width = W - 320;
+		ctx.fillStyle = "rgba(255,255,255,0.10)";
+		roundRect(ctx, left, y, width, 16, 8);
 		ctx.fill();
-		ctx.fillStyle = zone;
-		roundRect(ctx, left, top, width / 2, 18, 9);
+		ctx.fillStyle = "rgba(255,255,255,0.22)";
+		roundRect(ctx, left, y, width / 2, 16, 8);
 		ctx.fill();
-		ctx.font = "500 32px " + font;
+		ctx.font = "500 30px " + font;
 		[[0, "1.00"], [0.25, "1.50"], [0.375, "1.75"], [0.5, "2.00"], [1, "3.00"]].forEach(function (t, i, all) {
 			var x = left + width * t[0];
 			ctx.fillStyle = muted;
 			var w = ctx.measureText(t[1]).width;
-			ctx.fillText(t[1], i === 0 ? x : i === all.length - 1 ? x - w : x - w / 2, top + 80);
+			ctx.fillText(t[1], i === 0 ? x : i === all.length - 1 ? x - w : x - w / 2, y + 68);
 		});
 		if (out.counted) {
-			var pos = Math.max(0, Math.min(1, (out.result - 1) / 2));
-			ctx.fillStyle = dark ? "#1B2541" : "#FFFFFF";
+			var px = left + width * Math.max(0, Math.min(1, (out.result - 1) / 2));
 			ctx.beginPath();
-			ctx.arc(left + width * pos, top + 9, 30, 0, Math.PI * 2);
+			ctx.arc(px, y + 8, 28, 0, Math.PI * 2);
+			ctx.fillStyle = "#0E1428";
 			ctx.fill();
-			ctx.fillStyle = accent;
 			ctx.beginPath();
-			ctx.arc(left + width * pos, top + 9, 22, 0, Math.PI * 2);
+			ctx.arc(px, y + 8, 20, 0, Math.PI * 2);
+			ctx.fillStyle = tier ? metal(px - 20, y - 12, px + 20, y + 28) : "#D2A73F";
 			ctx.fill();
 		}
+		y += 180;
 
 		// Units and subjects
-		[["Units", String(out.totalUnits)], ["Subjects", String(out.counted)]].forEach(function (s, i) {
-			var x = X + i * 300;
+		[[CX - 170, String(out.totalUnits), "Units"], [CX + 170, String(out.counted), "Subjects"]].forEach(function (s) {
+			ctx.textAlign = "center";
+			ctx.fillStyle = white;
+			ctx.font = "600 76px " + font;
+			ctx.fillText(s[1], s[0], y);
 			ctx.fillStyle = muted;
-			ctx.font = "500 36px " + font;
-			ctx.fillText(s[0], x, 1080);
-			ctx.fillStyle = text;
-			ctx.font = "600 72px " + font;
-			ctx.fillText(s[1], x, 1160);
+			ctx.font = "500 32px " + font;
+			ctx.fillText(s[2], s[0], y + 50);
 		});
-		ctx.fillStyle = muted;
-		ctx.font = "400 32px " + font;
-		ctx.fillText("GWA Calculator for CLSU", X, H - 84);
+		ctx.textAlign = "left";
+		ctx.fillStyle = "rgba(255,255,255,0.12)";
+		ctx.fillRect(CX - 1, y - 60, 2, 120);
+
+		centered("GWA Calculator for CLSU", 1620, "400 32px " + font, muted);
 		return c;
 	}
 
