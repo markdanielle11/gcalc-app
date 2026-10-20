@@ -14,6 +14,14 @@ for _ in $(seq 1 90); do
 done
 echo "----- app log -----"
 adb logcat -d -s GCalc:I | tail -40
+# Surface the result as a GitHub annotation (readable without the full log)
+RESULT="$(adb logcat -d -s GCalc:I | grep -o 'GCALC_SELFTEST.*' | tail -1 || true)"
+if echo "$RESULT" | grep -q "GCALC_SELFTEST PASS"; then
+  echo "::notice title=OCR self-test::${RESULT:-no result}"
+else
+  echo "::error title=OCR self-test::${RESULT:-no result within timeout}"
+  adb logcat -d -s GCalc:I | tail -15 | while IFS= read -r l; do echo "::warning title=app log::$l"; done
+fi
 
 # Screenshot of the normal app for the build artifacts
 adb shell am force-stop com.gcalc.gwa
