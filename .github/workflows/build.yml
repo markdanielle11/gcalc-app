@@ -4,6 +4,10 @@ name: Build GCalc
 on:
   push:
     branches: [main]
+    # Test tooling and docs don't change the app; skip a rebuild for them.
+    paths-ignore:
+      - "tests/**"
+      - "**.md"
   workflow_dispatch:
 
 permissions:
