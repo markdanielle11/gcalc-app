@@ -1127,7 +1127,7 @@
 				});
 			});
 		});
-		return function cellText(r, c) {
+		function cellText(r, c) {
 			var words = (cells[r + "," + c] || []).slice().sort(function (a, b) { return a.box[1] - b.box[1]; });
 			var lines = [];
 			words.forEach(function (w) {
@@ -1139,7 +1139,18 @@
 			return lines.map(function (l) {
 				return l.words.sort(function (a, b) { return a.box[0] - b.box[0]; }).map(function (w) { return w.text; }).join(" ");
 			}).join(" ").trim();
+		}
+		/* Ink in the cell that no recognized word covers (a letter the AI
+		   skipped, like the "L" of "2391L"). */
+		cellText.uncovered = function (r, c, cell) {
+			var words = cells[r + "," + c] || [];
+			if (!cell || !words.length) return false;
+			var right = Math.max.apply(null, words.map(function (w) { return w.box[2]; }));
+			var left = Math.min.apply(null, words.map(function (w) { return w.box[0]; }));
+			var charW = Math.min.apply(null, words.map(function (w) { return (w.box[2] - w.box[0]) / Math.max(1, w.text.length); }));
+			return cell.ink[2] - right > charW * 0.6 || left - cell.ink[0] > charW * 0.6;
 		};
+		return cellText;
 	}
 
 	async function readTableAI(prep, layout, getTesseract, report) {
@@ -1162,11 +1173,21 @@
 
 				if (phase === "subject") {
 					if (++tried > 3) break; // no code in the first cells: not a subject row
+					// "1100" sometimes comes back as "11 00".
+					text = text.replace(/(\d)\s+(?=\d)/g, "$1");
 					var m = matchCode(text) || matchCode(text.toUpperCase().replace(/[^A-Z0-9& ]/g, ""));
-					if (m && m.index <= 3) {
+					if (m && m.index <= 3 && cellText.uncovered(r, c, cell)) {
+						// Part of the code wasn't read: let Tesseract read the whole cell.
+						var tName = await readSubject(await getTesseract(), cell);
+						if (tName && tName.split(" ")[0] === fixPrefix(m.name.split(" ")[0])) {
+							name = tName;
+							m = null;
+						}
+					}
+					if (!name && m && m.index <= 3) {
 						var mp = m.name.split(" ");
 						name = fixPrefix(mp[0]) + " " + mp.slice(1).join(" ");
-					} else if (cell && /[A-Za-z]/.test(text) && /\d/.test(text)) {
+					} else if (!name && cell && /[A-Za-z]/.test(text) && /\d/.test(text)) {
 						// Looks like a code the AI garbled: let Tesseract try this cell.
 						name = await readSubject(await getTesseract(), cell);
 					}
