@@ -1,16 +1,21 @@
 /* GCalc: GWA calculator for CLSU students.
    Port of github.com/AaronJay30/gwa-calculator (React) to plain JavaScript
-   so it runs offline inside the Android app and as an installable web app. */
+   so it runs offline inside the Android app and as an installable web app.
+   Subjects are kept per semester; each semester has its own GWA and the
+   overall GWA covers every semester. */
 (function () {
 	"use strict";
 
 	var GRADES = ["1.00", "1.25", "1.50", "1.75", "2.00", "2.25", "2.50", "2.75", "3.00", "4.00", "5.00"];
+	var GRADE_VALUES = GRADES.map(parseFloat);
 	var MIN_UNITS = 1;
 	var MAX_UNITS = 10;
 	var DEFAULT_UNITS = 3;
 	var HONORS_MIN_UNITS = 10; // honors need MORE than this many units
 	var STORAGE_KEY = "gcalc-state-v1";
 	var TOAST_MS = 5000;
+	var TERM_NAMES = ["1st Semester", "2nd Semester", "Midyear"];
+	var STANDING_RANK = { "": 0, "Dean's Lister": 1, "College Scholar": 2, "University Scholar": 3 };
 
 	function $(id) {
 		return document.getElementById(id);
@@ -18,7 +23,9 @@
 
 	var els = {
 		root: document.documentElement,
+		terms: $("terms"),
 		hero: $("hero"),
+		heroLabel: $("hero-label"),
 		gwa: $("gwa"),
 		standing: $("standing"),
 		standingText: $("standing-text"),
@@ -26,6 +33,8 @@
 		subjectCount: $("subject-count"),
 		statUnits: $("stat-units"),
 		statSubjects: $("stat-subjects"),
+		statOverallWrap: $("stat-overall-wrap"),
+		statOverall: $("stat-overall"),
 		list: $("list"),
 		empty: $("empty"),
 		add: $("add-btn"),
@@ -38,6 +47,7 @@
 		editor: $("editor"),
 		editorTitle: $("editor-title"),
 		editorClose: $("editor-close"),
+		editorGwa: $("editor-gwa"),
 		nameInput: $("name-input"),
 		gradeGrid: $("grade-grid"),
 		unitsGrid: $("units-grid"),
@@ -45,6 +55,19 @@
 		editorPrimaryText: $("editor-primary-text"),
 		editorPrimaryIcon: $("editor-primary-icon"),
 		editorSecondary: $("editor-secondary"),
+		quick: $("quick"),
+		quickTitle: $("quick-title"),
+		quickClose: $("quick-close"),
+		quickGrid: $("quick-grid"),
+		quickGwa: $("quick-gwa"),
+		quickMore: $("quick-more"),
+		termSheet: $("term-sheet"),
+		termTitle: $("term-title"),
+		termClose: $("term-close"),
+		termName: $("term-name"),
+		termSuggest: $("term-suggest"),
+		termDelete: $("term-delete"),
+		termDone: $("term-done"),
 		importBtn: $("import-btn"),
 		importInput: $("import-input"),
 		importer: $("importer"),
@@ -67,20 +90,19 @@
 	};
 
 	var state = loadState();
-	var editing = null; // { id, isNew }
+	var editing = null;      // { id, isNew } in the subject editor
+	var quickId = null;      // subject in the quick grade sheet
+	var termEditing = null;  // { id, isNew } in the semester sheet
 	var toastTimer = null;
 	var undoAction = null;
 	var lastGwaText = null;
-	var shownGwa = 0;   // the number on screen while it counts to a new GWA
+	var lastRank = null;
+	var shownGwa = 0;        // the number on screen while it counts to a new GWA
 	var gwaFrame = 0;
 	var heroVisible = true;
+	var firstRender = true;
 
 	/* ---------- State ---------- */
-
-	function newRow() {
-		var id = state.rows.reduce(function (max, r) { return Math.max(max, r.id); }, -1) + 1;
-		return { id: id, name: "", grades: 0, units: DEFAULT_UNITS };
-	}
 
 	function systemPrefersDark() {
 		try {
@@ -94,28 +116,60 @@
 		return row.grades === 0 && row.name.trim() === "";
 	}
 
+	function cleanRows(rows) {
+		return (Array.isArray(rows) ? rows : []).map(function (r, i) {
+			r = r || {};
+			var g = GRADES.indexOf(Number(r.grades).toFixed(2)) >= 0 ? Number(r.grades) : 0;
+			var u = Math.floor(Number(r.units));
+			return {
+				id: typeof r.id === "number" ? r.id : i,
+				name: typeof r.name === "string" ? r.name.slice(0, 40) : "",
+				grades: g,
+				units: u >= MIN_UNITS && u <= MAX_UNITS ? u : DEFAULT_UNITS
+			};
+		}).filter(function (r) { return !isBlank(r); });
+	}
+
 	function loadState() {
+		var s = null;
 		try {
 			var saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY));
-			if (saved && Array.isArray(saved.rows)) {
-				return {
-					isDark: typeof saved.isDark === "boolean" ? saved.isDark : systemPrefersDark(),
-					rows: saved.rows.map(function (r, i) {
-						var g = GRADES.indexOf(Number(r.grades).toFixed(2)) >= 0 ? Number(r.grades) : 0;
-						var u = Math.floor(Number(r.units));
+			if (saved && typeof saved === "object") {
+				var terms;
+				if (Array.isArray(saved.terms) && saved.terms.length) {
+					terms = saved.terms.map(function (t, i) {
+						t = t || {};
 						return {
-							id: typeof r.id === "number" ? r.id : i,
-							name: typeof r.name === "string" ? r.name.slice(0, 40) : "",
-							grades: g,
-							units: u >= MIN_UNITS && u <= MAX_UNITS ? u : DEFAULT_UNITS
+							id: typeof t.id === "number" ? t.id : i,
+							name: typeof t.name === "string" && t.name.trim() ? t.name.slice(0, 30) : "Semester " + (i + 1),
+							rows: cleanRows(t.rows)
 						};
-					}).filter(function (r) { return !isBlank(r); })
+					});
+				} else {
+					// Saved before semesters existed: everything becomes the first semester.
+					terms = [{ id: 0, name: TERM_NAMES[0], rows: cleanRows(saved.rows) }];
+				}
+				s = {
+					isDark: typeof saved.isDark === "boolean" ? saved.isDark : systemPrefersDark(),
+					terms: terms,
+					active: typeof saved.active === "number" ? saved.active : terms[0].id
 				};
 			}
 		} catch (e) {
 			/* storage unavailable or corrupted: start fresh */
 		}
-		return { isDark: systemPrefersDark(), rows: [] };
+		if (!s) s = { isDark: systemPrefersDark(), terms: [{ id: 0, name: TERM_NAMES[0], rows: [] }], active: 0 };
+		// Subject ids are unique across all semesters.
+		var seen = {}, next = 0;
+		s.terms.forEach(function (t) { t.rows.forEach(function (r) { next = Math.max(next, r.id + 1); }); });
+		s.terms.forEach(function (t) {
+			t.rows.forEach(function (r) {
+				if (seen[r.id]) r.id = next++;
+				seen[r.id] = true;
+			});
+		});
+		if (!s.terms.some(function (t) { return t.id === s.active; })) s.active = s.terms[0].id;
+		return s;
 	}
 
 	function saveState() {
@@ -126,9 +180,34 @@
 		}
 	}
 
+	/** The semester being shown. */
+	function cur() {
+		for (var i = 0; i < state.terms.length; i++) {
+			if (state.terms[i].id === state.active) return state.terms[i];
+		}
+		return state.terms[0];
+	}
+
+	function findTerm(id) {
+		for (var i = 0; i < state.terms.length; i++) {
+			if (state.terms[i].id === id) return state.terms[i];
+		}
+		return null;
+	}
+
+	function allRows() {
+		return state.terms.reduce(function (all, t) { return all.concat(t.rows); }, []);
+	}
+
+	function newRow() {
+		var id = allRows().reduce(function (max, r) { return Math.max(max, r.id); }, -1) + 1;
+		return { id: id, name: "", grades: 0, units: DEFAULT_UNITS };
+	}
+
 	function findRow(id) {
-		for (var i = 0; i < state.rows.length; i++) {
-			if (state.rows[i].id === id) return state.rows[i];
+		var rows = cur().rows;
+		for (var i = 0; i < rows.length; i++) {
+			if (rows[i].id === id) return rows[i];
 		}
 		return null;
 	}
@@ -173,6 +252,18 @@
 		return decimals.length < 2 ? n.toFixed(2) : s;
 	}
 
+	function plural(n, word) {
+		return n + " " + word + (n === 1 ? "" : "s");
+	}
+
+	function defaultName(row) {
+		return "Subject " + (cur().rows.indexOf(row) + 1);
+	}
+
+	function rowLabel(row) {
+		return row.name.trim() || defaultName(row);
+	}
+
 	// Honors-level grades get the accent, failing grades red.
 	function gradeTier(g) {
 		if (g > 0 && g <= 1.75) return " is-top";
@@ -186,18 +277,6 @@
 		} catch (e) {
 			return false;
 		}
-	}
-
-	function plural(n, word) {
-		return n + " " + word + (n === 1 ? "" : "s");
-	}
-
-	function defaultName(row) {
-		return "Subject " + (state.rows.indexOf(row) + 1);
-	}
-
-	function rowLabel(row) {
-		return row.name.trim() || defaultName(row);
 	}
 
 	/* ---------- Small helpers ---------- */
@@ -221,56 +300,300 @@
 	}
 
 	// Short vibration on Android for taps that change data. No-op elsewhere.
-	function haptic() {
+	function haptic(ms) {
 		try {
-			if (navigator.vibrate) navigator.vibrate(8);
+			if (navigator.vibrate) navigator.vibrate(ms || 8);
 		} catch (e) {
 			/* ignore */
 		}
 	}
 
+	function openSheet(dialog) {
+		if (dialog.open) return;
+		if (typeof dialog.showModal === "function") dialog.showModal();
+		else dialog.setAttribute("open", "");
+	}
+
+	function closeSheet(dialog) {
+		if (!dialog.open) return;
+		if (typeof dialog.close === "function") dialog.close();
+		else {
+			dialog.removeAttribute("open");
+			dialog.dispatchEvent(new Event("close"));
+		}
+	}
+
+	// Tap on the dimmed area outside a sheet closes it.
+	function closeOnBackdrop(dialog, onClose) {
+		dialog.addEventListener("click", function (e) {
+			if (e.target !== dialog) return;
+			var r = dialog.getBoundingClientRect();
+			var inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+			if (!inside) (onClose || function () { closeSheet(dialog); })();
+		});
+	}
+
+	/* ---------- Semesters ---------- */
+
+	function renderTerms() {
+		els.terms.textContent = "";
+		var activeChip = null;
+		state.terms.forEach(function (t) {
+			var active = t.id === state.active;
+			var b = el("button", "term-chip" + (active ? " is-active" : ""));
+			b.type = "button";
+			b.setAttribute("aria-pressed", String(active));
+			b.appendChild(el("span", "term-name", t.name));
+			if (active) {
+				b.setAttribute("aria-label", t.name + ", edit semester");
+				b.appendChild(icon("caret-down", "term-caret"));
+				activeChip = b;
+			}
+			b.addEventListener("click", function () {
+				if (t.id === state.active) openTermSheet(t.id, false);
+				else switchTerm(t.id);
+			});
+			els.terms.appendChild(b);
+		});
+		var add = el("button", "term-chip is-add");
+		add.type = "button";
+		add.appendChild(icon("plus"));
+		add.appendChild(el("span", "", "Semester"));
+		add.setAttribute("aria-label", "Add semester");
+		add.addEventListener("click", addTerm);
+		els.terms.appendChild(add);
+		if (activeChip && els.terms.scrollWidth > els.terms.clientWidth) {
+			var left = activeChip.offsetLeft - 16;
+			if (left < els.terms.scrollLeft || activeChip.offsetLeft + activeChip.offsetWidth > els.terms.scrollLeft + els.terms.clientWidth) {
+				els.terms.scrollLeft = Math.max(0, left);
+			}
+		}
+	}
+
+	function switchTerm(id) {
+		state.active = id;
+		saveState();
+		haptic();
+		render({ quiet: true, entering: true });
+	}
+
+	function suggestTermName() {
+		var used = state.terms.map(function (t) { return t.name; });
+		for (var i = 0; i < TERM_NAMES.length; i++) {
+			if (used.indexOf(TERM_NAMES[i]) < 0) return TERM_NAMES[i];
+		}
+		return "Semester " + (state.terms.length + 1);
+	}
+
+	function addTerm() {
+		var id = state.terms.reduce(function (max, t) { return Math.max(max, t.id); }, -1) + 1;
+		state.terms.push({ id: id, name: suggestTermName(), rows: [] });
+		state.active = id;
+		saveState();
+		haptic();
+		render({ quiet: true, entering: true });
+		openTermSheet(id, true);
+	}
+
+	function openTermSheet(id, isNew) {
+		var t = findTerm(id);
+		if (!t) return;
+		termEditing = { id: id, isNew: isNew };
+		els.termTitle.textContent = isNew ? "New semester" : "Semester";
+		els.termName.value = t.name;
+		els.termDelete.hidden = state.terms.length < 2;
+		els.termDelete.textContent = isNew ? "Cancel" : "Delete";
+		els.termSheet.classList.toggle("is-single", state.terms.length < 2);
+		els.termSuggest.textContent = "";
+		TERM_NAMES.forEach(function (name) {
+			var b = el("button", "suggest-chip", name);
+			b.type = "button";
+			b.addEventListener("click", function () {
+				els.termName.value = name;
+				setTermName(name);
+				haptic();
+			});
+			els.termSuggest.appendChild(b);
+		});
+		openSheet(els.termSheet);
+	}
+
+	function setTermName(name) {
+		var t = termEditing && findTerm(termEditing.id);
+		if (!t) return;
+		t.name = name.slice(0, 30);
+		saveState();
+		renderTerms();
+		renderSummary({ quiet: true });
+	}
+
+	function removeTerm(id, silent) {
+		var index = -1;
+		for (var i = 0; i < state.terms.length; i++) if (state.terms[i].id === id) index = i;
+		if (index < 0 || state.terms.length < 2) return;
+		var removed = state.terms[index];
+		var wasActive = state.active;
+		state.terms.splice(index, 1);
+		if (state.active === id) state.active = state.terms[Math.max(0, index - 1)].id;
+		saveState();
+		haptic();
+		render({ quiet: true, entering: true });
+		if (silent) return;
+		showToast("Removed " + removed.name, function () {
+			state.terms.splice(Math.min(index, state.terms.length), 0, removed);
+			state.active = wasActive;
+			saveState();
+			render({ quiet: true });
+		});
+	}
+
+	els.termName.addEventListener("input", function () {
+		setTermName(els.termName.value);
+	});
+	els.termName.addEventListener("keydown", function (e) {
+		if (e.key === "Enter") {
+			e.preventDefault();
+			closeSheet(els.termSheet);
+		}
+	});
+	els.termDone.addEventListener("click", function () { closeSheet(els.termSheet); });
+	els.termClose.addEventListener("click", function () { closeSheet(els.termSheet); });
+	els.termDelete.addEventListener("click", function () {
+		if (!termEditing) return;
+		var id = termEditing.id, isNew = termEditing.isNew;
+		termEditing = null;
+		closeSheet(els.termSheet);
+		removeTerm(id, isNew); // cancelling a new semester needs no undo
+	});
+	closeOnBackdrop(els.termSheet);
+	els.termSheet.addEventListener("close", function () {
+		var t = termEditing && findTerm(termEditing.id);
+		termEditing = null;
+		if (t && !t.name.trim()) {
+			t.name = suggestTermName();
+			saveState();
+			render({ quiet: true });
+		}
+	});
+
 	/* ---------- Rendering ---------- */
 
-	function buildRow(row) {
+	function buildRow(row, index) {
 		var li = el("li", "subject");
 		li.dataset.id = String(row.id);
+		li.style.setProperty("--i", String(index));
+
+		var del = el("span", "subject-delete");
+		del.setAttribute("aria-hidden", "true");
+		del.appendChild(icon("trash"));
+		li.appendChild(del);
+
+		var swipe = el("div", "subject-row");
 
 		var btn = el("button", "subject-btn");
 		btn.type = "button";
 		var name = row.name.trim();
-		var gradeText = row.grades === 0 ? "No grade" : row.grades.toFixed(2);
-		btn.setAttribute("aria-label",
-			rowLabel(row) + ", grade " + gradeText + ", " + plural(row.units, "unit") + ". Edit");
-
+		btn.setAttribute("aria-label", rowLabel(row) + ", " + plural(row.units, "unit") + ". Edit");
 		var text = el("span", "subject-text");
 		text.appendChild(el("span", "subject-name" + (name ? "" : " is-placeholder"), rowLabel(row)));
 		text.appendChild(el("span", "subject-units", plural(row.units, "unit")));
 		btn.appendChild(text);
-
-		btn.appendChild(el("span", "grade-pill" + (row.grades === 0 ? " is-empty" : gradeTier(row.grades)),
-			row.grades === 0 ? "Set grade" : row.grades.toFixed(2)));
-		btn.appendChild(icon("caret-right", "chevron"));
-
 		btn.addEventListener("click", function () {
+			if (li.dataset.swiped) return;
 			openEditor(row.id, false);
 		});
 
-		li.appendChild(btn);
+		var gradeBtn = el("button", "grade-pill" + (row.grades === 0 ? " is-empty" : gradeTier(row.grades)),
+			row.grades === 0 ? "Set grade" : row.grades.toFixed(2));
+		gradeBtn.type = "button";
+		gradeBtn.setAttribute("aria-label", (row.grades === 0 ? "Set grade" : "Grade " + row.grades.toFixed(2) + ", change") + " for " + rowLabel(row));
+		gradeBtn.addEventListener("click", function () {
+			if (li.dataset.swiped) return;
+			openQuick(row.id);
+		});
+
+		swipe.appendChild(btn);
+		swipe.appendChild(gradeBtn);
+		li.appendChild(swipe);
+		attachSwipe(li, swipe, function () { removeRow(row.id); });
 		return li;
 	}
 
-	function renderList() {
-		els.list.textContent = "";
-		state.rows.forEach(function (row) {
-			els.list.appendChild(buildRow(row));
+	/* Swipe a subject to the left to delete it (touch only; the editor has a Delete button too). */
+	function attachSwipe(li, row, onDelete) {
+		var startX = 0, startY = 0, dx = 0, pointer = null, mode = null;
+		function reset(animate) {
+			li.classList.remove("is-swiping", "will-delete");
+			row.style.transition = animate ? "" : "none";
+			row.style.transform = "";
+		}
+		row.addEventListener("pointerdown", function (e) {
+			if (e.pointerType === "mouse" || pointer !== null) return;
+			pointer = e.pointerId;
+			startX = e.clientX;
+			startY = e.clientY;
+			dx = 0;
+			mode = null;
 		});
-		els.empty.hidden = state.rows.length > 0;
-		els.clear.disabled = state.rows.length === 0;
-		els.subjectCount.textContent = state.rows.length ? String(state.rows.length) : "";
+		row.addEventListener("pointermove", function (e) {
+			if (e.pointerId !== pointer) return;
+			var x = e.clientX - startX, y = e.clientY - startY;
+			if (mode === null && (Math.abs(x) > 10 || Math.abs(y) > 10)) {
+				mode = x < 0 && Math.abs(x) > Math.abs(y) * 1.3 ? "swipe" : "scroll";
+				if (mode === "swipe") {
+					try { row.setPointerCapture(pointer); } catch (err) { /* ignore */ }
+					li.classList.add("is-swiping");
+					row.style.transition = "none";
+				}
+			}
+			if (mode !== "swipe") return;
+			dx = Math.min(0, x);
+			row.style.transform = "translateX(" + dx + "px)";
+			var past = -dx > li.offsetWidth * 0.38;
+			if (past !== li.classList.contains("will-delete")) {
+				li.classList.toggle("will-delete", past);
+				haptic(past ? 12 : 4);
+			}
+		});
+		function end(e) {
+			if (e.pointerId !== pointer) return;
+			pointer = null;
+			if (mode !== "swipe") return;
+			// The tap that ends a swipe must not also open the editor.
+			li.dataset.swiped = "1";
+			window.setTimeout(function () { delete li.dataset.swiped; }, 350);
+			if (-dx > li.offsetWidth * 0.38 && e.type === "pointerup") {
+				row.style.transition = "";
+				row.style.transform = "translateX(-110%)";
+				li.classList.add("is-leaving");
+				window.setTimeout(onDelete, reducedMotion() ? 0 : 200);
+			} else {
+				reset(true);
+			}
+		}
+		row.addEventListener("pointerup", end);
+		row.addEventListener("pointercancel", end);
 	}
 
-	function renderSummary() {
-		var out = compute(state.rows);
+	function renderList(opts) {
+		var rows = cur().rows;
+		els.list.textContent = "";
+		rows.forEach(function (row, i) {
+			els.list.appendChild(buildRow(row, i));
+		});
+		els.list.classList.remove("is-entering");
+		if (opts && opts.entering && !reducedMotion()) {
+			void els.list.offsetWidth;
+			els.list.classList.add("is-entering");
+		}
+		els.empty.hidden = rows.length > 0;
+		els.clear.disabled = rows.length === 0;
+		els.subjectCount.textContent = rows.length ? String(rows.length) : "";
+	}
+
+	function renderSummary(opts) {
+		opts = opts || {};
+		var out = compute(cur().rows);
 		var text = out.counted === 0 ? "0.00" : formatGwa(out.result);
 
 		var empty = out.counted === 0;
@@ -282,17 +605,33 @@
 		var pos = empty ? 0 : Math.max(0, Math.min(1, (out.result - 1) / 2));
 		els.scaleRail.style.transform = "translateX(" + (pos * 100).toFixed(2) + "%)";
 		els.hero.classList.toggle("has-gwa", !empty);
+		els.hero.classList.toggle("is-honors", out.academic !== "");
 
+		els.heroLabel.textContent = state.terms.length > 1 ? cur().name + " GWA" : "Your GWA";
 		els.standingText.textContent = out.academic;
 		els.standing.hidden = out.academic === "";
 
 		els.statUnits.textContent = String(out.totalUnits);
 		els.statSubjects.textContent = String(out.counted);
 
+		var overall = compute(allRows());
+		els.statOverallWrap.hidden = state.terms.length < 2;
+		els.statOverall.textContent = overall.counted === 0 ? "0.00" : formatGwa(overall.result);
+
 		els.miniGwa.textContent = text;
 		els.miniStanding.textContent = out.academic;
 		els.miniStanding.hidden = out.academic === "";
+		els.editorGwa.textContent = text;
+		els.quickGwa.textContent = text;
 		updateMinibar();
+
+		// Reaching honors (or a higher one) by an edit is worth a small celebration.
+		var rank = STANDING_RANK[out.academic] || 0;
+		if (lastRank !== null && rank > lastRank && !opts.quiet) {
+			celebrate();
+			haptic(30);
+		}
+		lastRank = rank;
 	}
 
 	// Counts the GWA up or down to its new value, so a change is easy to follow.
@@ -316,13 +655,20 @@
 		gwaFrame = window.requestAnimationFrame(step);
 	}
 
-	function render() {
-		renderList();
-		renderSummary();
+	function render(opts) {
+		opts = opts || {};
+		if (firstRender) {
+			opts.entering = true;
+			opts.quiet = true;
+			firstRender = false;
+		}
+		renderTerms();
+		renderList(opts);
+		renderSummary(opts);
 	}
 
 	function updateMinibar() {
-		var show = !heroVisible && state.rows.length > 0;
+		var show = !heroVisible && cur().rows.length > 0;
 		els.minibar.classList.toggle("is-visible", show);
 	}
 
@@ -343,12 +689,68 @@
 		}
 	}
 
+	/* ---------- Celebration ---------- */
+
+	function celebrate() {
+		if (reducedMotion() || !window.requestAnimationFrame) return;
+		var canvas = el("canvas", "confetti");
+		canvas.setAttribute("aria-hidden", "true");
+		var dpr = Math.min(2, window.devicePixelRatio || 1);
+		var w = window.innerWidth, h = window.innerHeight;
+		canvas.width = w * dpr;
+		canvas.height = h * dpr;
+		document.body.appendChild(canvas);
+		var ctx = canvas.getContext("2d");
+		ctx.scale(dpr, dpr);
+		var styles = window.getComputedStyle(els.root);
+		var colors = [styles.getPropertyValue("--accent").trim(), styles.getPropertyValue("--accent-text").trim(), styles.getPropertyValue("--text").trim(), "#7FA2FF", "#F2D48A"];
+		var r = els.hero.getBoundingClientRect();
+		var ox = r.left + r.width / 2, oy = Math.max(40, r.top + r.height * 0.35);
+		var parts = [];
+		for (var i = 0; i < 110; i++) {
+			var a = -Math.PI / 2 + (Math.random() - 0.5) * Math.PI * 0.9;
+			var v = 7 + Math.random() * 9;
+			parts.push({
+				x: ox, y: oy,
+				vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+				w: 5 + Math.random() * 5, h: 8 + Math.random() * 6,
+				rot: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.4,
+				color: colors[i % colors.length]
+			});
+		}
+		var start = null;
+		function frame(now) {
+			if (start === null) start = now;
+			var t = (now - start) / 1000;
+			ctx.clearRect(0, 0, w, h);
+			parts.forEach(function (p) {
+				p.vy += 0.32;
+				p.vx *= 0.985;
+				p.vy *= 0.985;
+				p.x += p.vx;
+				p.y += p.vy;
+				p.rot += p.vr;
+				ctx.save();
+				ctx.globalAlpha = Math.max(0, 1 - Math.max(0, t - 1.1) / 0.6);
+				ctx.translate(p.x, p.y);
+				ctx.rotate(p.rot);
+				ctx.scale(1, Math.cos(p.rot * 2));
+				ctx.fillStyle = p.color;
+				ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+				ctx.restore();
+			});
+			if (t < 1.75) window.requestAnimationFrame(frame);
+			else canvas.remove();
+		}
+		window.requestAnimationFrame(frame);
+	}
+
 	/* ---------- Editor sheet ---------- */
 
-	function buildChoices(container, values, current, format, onPick) {
+	function buildChoices(container, values, current, format, onPick, isGrade) {
 		container.textContent = "";
 		values.forEach(function (v) {
-			var b = el("button", "choice" + (v === 5 && values.length === GRADES.length ? " is-fail" : ""), format(v));
+			var b = el("button", "choice" + (isGrade && v >= 5 ? " is-fail" : ""), format(v));
 			b.type = "button";
 			b.setAttribute("role", "radio");
 			b.setAttribute("aria-checked", String(v === current));
@@ -363,6 +765,12 @@
 		});
 	}
 
+	function unitValues() {
+		var units = [];
+		for (var u = MIN_UNITS; u <= MAX_UNITS; u++) units.push(u);
+		return units;
+	}
+
 	function fillEditor() {
 		var row = findRow(editing.id);
 		if (!row) return;
@@ -371,17 +779,15 @@
 		els.nameInput.value = row.name;
 		els.nameInput.placeholder = defaultName(row);
 
-		buildChoices(els.gradeGrid, GRADES.map(parseFloat), row.grades,
+		buildChoices(els.gradeGrid, GRADE_VALUES, row.grades,
 			function (g) { return g.toFixed(2); },
 			function (g) {
 				row.grades = g;
 				saveState();
 				render();
-			});
+			}, true);
 
-		var units = [];
-		for (var u = MIN_UNITS; u <= MAX_UNITS; u++) units.push(u);
-		buildChoices(els.unitsGrid, units, row.units, String, function (u) {
+		buildChoices(els.unitsGrid, unitValues(), row.units, String, function (u) {
 			row.units = u;
 			saveState();
 			render();
@@ -403,30 +809,19 @@
 	function openEditor(id, isNew) {
 		editing = { id: id, isNew: isNew };
 		fillEditor();
-		if (!els.editor.open) {
-			if (typeof els.editor.showModal === "function") {
-				els.editor.showModal();
-			} else {
-				els.editor.setAttribute("open", "");
-			}
-		}
+		openSheet(els.editor);
 		els.editor.querySelector(".sheet-body").scrollTop = 0;
 	}
 
 	function closeEditor() {
-		if (typeof els.editor.close === "function") {
-			els.editor.close();
-		} else {
-			els.editor.removeAttribute("open");
-			onEditorClosed();
-		}
+		closeSheet(els.editor);
 	}
 
 	// Drop a new subject the user opened but never filled in.
 	function discardIfBlank(id) {
 		var row = findRow(id);
 		if (row && isBlank(row)) {
-			state.rows = state.rows.filter(function (r) { return r.id !== id; });
+			cur().rows = cur().rows.filter(function (r) { return r.id !== id; });
 			saveState();
 			return true;
 		}
@@ -447,12 +842,12 @@
 		var li = els.list.querySelector('[data-id="' + id + '"]');
 		if (!li) return;
 		li.classList.add("is-new");
-		li.scrollIntoView({ block: "nearest", behavior: "smooth" });
+		li.scrollIntoView({ block: "nearest", behavior: reducedMotion() ? "auto" : "smooth" });
 	}
 
 	function startNewSubject() {
 		var row = newRow();
-		state.rows = state.rows.concat([row]);
+		cur().rows = cur().rows.concat([row]);
 		saveState();
 		render();
 		haptic();
@@ -461,14 +856,7 @@
 
 	els.editor.addEventListener("close", onEditorClosed);
 	els.editorClose.addEventListener("click", closeEditor);
-
-	els.editor.addEventListener("click", function (e) {
-		// Tap on the dimmed area outside the sheet closes it.
-		if (e.target !== els.editor) return;
-		var r = els.editor.getBoundingClientRect();
-		var inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-		if (!inside) closeEditor();
-	});
+	closeOnBackdrop(els.editor, closeEditor);
 
 	els.nameInput.addEventListener("input", function () {
 		var row = editing && findRow(editing.id);
@@ -492,7 +880,7 @@
 			var prevId = editing.id;
 			discardIfBlank(prevId);
 			var row = newRow();
-			state.rows = state.rows.concat([row]);
+			cur().rows = cur().rows.concat([row]);
 			saveState();
 			render();
 			highlightRow(prevId);
@@ -516,12 +904,39 @@
 		}
 	});
 
+	/* ---------- Quick grade sheet ---------- */
+
+	function openQuick(id) {
+		var row = findRow(id);
+		if (!row) return;
+		quickId = id;
+		els.quickTitle.textContent = rowLabel(row);
+		buildChoices(els.quickGrid, GRADE_VALUES, row.grades, function (g) { return g.toFixed(2); }, function (g) {
+			row.grades = g;
+			saveState();
+			render();
+			// Let the choice show for a moment, then close.
+			window.setTimeout(function () { closeSheet(els.quick); }, reducedMotion() ? 0 : 220);
+		}, true);
+		openSheet(els.quick);
+	}
+
+	els.quickClose.addEventListener("click", function () { closeSheet(els.quick); });
+	els.quickMore.addEventListener("click", function () {
+		var id = quickId;
+		closeSheet(els.quick);
+		if (id !== null) openEditor(id, false);
+	});
+	closeOnBackdrop(els.quick);
+	els.quick.addEventListener("close", function () { quickId = null; });
+
 	/* ---------- Toast with undo ---------- */
 
 	function showToast(message, onUndo) {
 		window.clearTimeout(toastTimer);
 		undoAction = onUndo;
 		els.toastText.textContent = message;
+		els.toastUndo.hidden = !onUndo;
 		els.toast.hidden = false;
 		toastTimer = window.setTimeout(hideToast, TOAST_MS);
 	}
@@ -543,21 +958,11 @@
 	var importRun = 0;       // ignores results from a cancelled read
 	var importFound = [];    // rows read from the image
 	var importPicked = [];   // true/false per row
+	var importOpen = -1;     // row whose details are open for fixing
 	var previewUrl = null;
 
 	function normName(name) {
 		return name.toUpperCase().replace(/[^A-Z0-9]/g, "");
-	}
-
-	function openSheet(dialog) {
-		if (dialog.open) return;
-		if (typeof dialog.showModal === "function") dialog.showModal();
-		else dialog.setAttribute("open", "");
-	}
-
-	function closeSheet(dialog) {
-		if (typeof dialog.close === "function") dialog.close();
-		else dialog.removeAttribute("open");
 	}
 
 	function setImportView(view) {
@@ -586,38 +991,130 @@
 		els.importPrimary.textContent = n === 0 ? "Add subjects" : "Add " + plural(n, "subject");
 	}
 
+	function miniChoices(values, current, format, onPick) {
+		var grid = el("div", "mini-grid");
+		grid.setAttribute("role", "radiogroup");
+		values.forEach(function (v) {
+			var b = el("button", "mini-choice", format(v));
+			b.type = "button";
+			b.setAttribute("role", "radio");
+			b.setAttribute("aria-checked", String(v === current));
+			b.addEventListener("click", function () {
+				Array.prototype.forEach.call(grid.children, function (c) {
+					c.setAttribute("aria-checked", String(c === b));
+				});
+				haptic();
+				onPick(v);
+			});
+			grid.appendChild(b);
+		});
+		return grid;
+	}
+
+	function buildImportRow(row, i) {
+		var li = el("li", "import-row" + (importOpen === i ? " is-open" : ""));
+		li.style.setProperty("--i", String(i));
+
+		var item = el("div", "import-item");
+		var check = el("button", "check-btn");
+		check.type = "button";
+		check.setAttribute("role", "checkbox");
+		check.setAttribute("aria-checked", String(importPicked[i]));
+		check.setAttribute("aria-label", "Add " + row.name);
+		var box = el("span", "check");
+		box.appendChild(icon("check"));
+		check.appendChild(box);
+		check.addEventListener("click", function () {
+			importPicked[i] = !importPicked[i];
+			check.setAttribute("aria-checked", String(importPicked[i]));
+			li.classList.toggle("is-off", !importPicked[i]);
+			haptic();
+			updateImportButton();
+		});
+		item.appendChild(check);
+
+		var main = el("button", "import-main");
+		main.type = "button";
+		main.setAttribute("aria-expanded", String(importOpen === i));
+		main.setAttribute("aria-label", row.name + ", " + plural(row.units, "unit") + ", " +
+			(row.grades ? "grade " + row.grades.toFixed(2) : "no grade yet") + ". Fix");
+		var text = el("span", "subject-text");
+		text.appendChild(el("span", "subject-name", row.name));
+		text.appendChild(el("span", "subject-units", plural(row.units, "unit")));
+		main.appendChild(text);
+		main.appendChild(el("span", "grade-pill" + (row.grades ? gradeTier(row.grades) : " is-empty"),
+			row.grades ? row.grades.toFixed(2) : "No grade yet"));
+		main.appendChild(icon("caret-down", "import-caret"));
+		main.addEventListener("click", function () {
+			importOpen = importOpen === i ? -1 : i;
+			haptic();
+			renderImportList();
+		});
+		item.appendChild(main);
+		li.appendChild(item);
+		li.classList.toggle("is-off", !importPicked[i]);
+
+		if (importOpen === i) {
+			var edit = el("div", "import-edit");
+
+			var nameLabel = el("label", "field-label", "Subject name");
+			var nameInput = el("input", "text-input is-small");
+			nameInput.type = "text";
+			nameInput.maxLength = 40;
+			nameInput.value = row.name;
+			nameInput.autocomplete = "off";
+			nameInput.setAttribute("autocapitalize", "characters");
+			nameInput.id = "import-name-" + i;
+			nameLabel.htmlFor = nameInput.id;
+			nameInput.addEventListener("input", function () {
+				row.name = nameInput.value.trim() ? nameInput.value.slice(0, 40) : row.name;
+				main.querySelector(".subject-name").textContent = nameInput.value || row.name;
+			});
+			edit.appendChild(nameLabel);
+			edit.appendChild(nameInput);
+
+			edit.appendChild(el("p", "field-label", "Units"));
+			edit.appendChild(miniChoices(unitValues(), row.units, String, function (u) {
+				row.units = u;
+				row.unitsFound = true;
+				pickRow(i);
+				main.querySelector(".subject-units").textContent = plural(u, "unit");
+			}));
+
+			edit.appendChild(el("p", "field-label", "Grade"));
+			edit.appendChild(miniChoices([0].concat(GRADE_VALUES), row.grades || 0,
+				function (g) { return g ? g.toFixed(2) : "None"; },
+				function (g) {
+					row.grades = g;
+					pickRow(i);
+					var pill = main.querySelector(".grade-pill");
+					pill.className = "grade-pill" + (g ? gradeTier(g) : " is-empty");
+					pill.textContent = g ? g.toFixed(2) : "No grade yet";
+				}));
+			li.appendChild(edit);
+		}
+
+		function pickRow(n) {
+			if (!importPicked[n]) {
+				importPicked[n] = true;
+				check.setAttribute("aria-checked", "true");
+				li.classList.remove("is-off");
+				updateImportButton();
+			}
+		}
+		return li;
+	}
+
 	function renderImportList() {
 		els.importList.textContent = "";
 		importFound.forEach(function (row, i) {
-			var li = el("li", "import-row");
-			li.style.setProperty("--i", String(i));
-			var item = el("button", "import-item");
-			item.type = "button";
-			item.setAttribute("role", "checkbox");
-			item.setAttribute("aria-checked", String(importPicked[i]));
-
-			var box = el("span", "check");
-			box.appendChild(icon("check"));
-			item.appendChild(box);
-
-			var text = el("span", "subject-text");
-			text.appendChild(el("span", "subject-name", row.name));
-			text.appendChild(el("span", "subject-units", plural(row.units, "unit")));
-			item.appendChild(text);
-
-			item.appendChild(el("span", "grade-pill" + (row.grades ? gradeTier(row.grades) : " is-empty"),
-				row.grades ? row.grades.toFixed(2) : "No grade yet"));
-
-			item.addEventListener("click", function () {
-				importPicked[i] = !importPicked[i];
-				item.setAttribute("aria-checked", String(importPicked[i]));
-				haptic();
-				updateImportButton();
-			});
-			li.appendChild(item);
-			els.importList.appendChild(li);
+			els.importList.appendChild(buildImportRow(row, i));
 		});
 		updateImportButton();
+		if (importOpen >= 0) {
+			var open = els.importList.children[importOpen];
+			if (open) open.scrollIntoView({ block: "nearest", behavior: reducedMotion() ? "auto" : "smooth" });
+		}
 	}
 
 	function showImportMessage(title, message) {
@@ -634,6 +1131,7 @@
 		var run = ++importRun;
 		importFound = [];
 		importPicked = [];
+		importOpen = -1;
 		if (previewUrl) URL.revokeObjectURL(previewUrl);
 		previewUrl = URL.createObjectURL(file);
 		els.importPreview.src = previewUrl;
@@ -665,7 +1163,7 @@
 			els.importTitle.textContent = "Found " + plural(result.rows.length, "subject");
 			setImportView("review");
 			renderImportList();
-			haptic();
+			haptic(14);
 		}).catch(function (err) {
 			if (run !== importRun) return;
 			showImportMessage("Could not read image", (err && err.message) || "Something went wrong while reading the image.");
@@ -675,14 +1173,15 @@
 	function applyImport() {
 		var chosen = importFound.filter(function (r, i) { return importPicked[i]; });
 		if (!chosen.length) return;
-		var previous = state.rows.map(function (r) {
+		var term = cur();
+		var previous = term.rows.map(function (r) {
 			return { id: r.id, name: r.name, grades: r.grades, units: r.units };
 		});
 		var added = 0, updated = 0;
 		chosen.forEach(function (r) {
 			var match = null;
-			for (var i = 0; i < state.rows.length; i++) {
-				if (normName(state.rows[i].name) === normName(r.name)) match = state.rows[i];
+			for (var i = 0; i < term.rows.length; i++) {
+				if (normName(term.rows[i].name) === normName(r.name)) match = term.rows[i];
 			}
 			if (match) {
 				// Same subject already in the list: refresh it (keep a grade you typed if the image has none).
@@ -694,21 +1193,21 @@
 				row.name = r.name;
 				row.units = r.units;
 				row.grades = r.grades;
-				state.rows.push(row);
+				term.rows.push(row);
 				added++;
 			}
 		});
 		saveState();
 		closeSheet(els.importer);
-		render();
+		render({ entering: true });
 		haptic();
 		var parts = [];
 		if (added) parts.push("Added " + plural(added, "subject"));
 		if (updated) parts.push((added ? "updated " : "Updated ") + updated);
 		showToast(parts.join(", "), function () {
-			state.rows = previous;
+			term.rows = previous;
 			saveState();
-			render();
+			render({ quiet: true });
 		});
 	}
 
@@ -742,18 +1241,9 @@
 		}
 	});
 
-	els.importSecondary.addEventListener("click", function () {
-		closeSheet(els.importer);
-	});
-	els.importClose.addEventListener("click", function () {
-		closeSheet(els.importer);
-	});
-	els.importer.addEventListener("click", function (e) {
-		if (e.target !== els.importer) return;
-		var r = els.importer.getBoundingClientRect();
-		var inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-		if (!inside) closeSheet(els.importer);
-	});
+	els.importSecondary.addEventListener("click", function () { closeSheet(els.importer); });
+	els.importClose.addEventListener("click", function () { closeSheet(els.importer); });
+	closeOnBackdrop(els.importer);
 	els.importer.addEventListener("close", function () {
 		importRun++; // drop any read still in progress
 		setImportView("none");
@@ -762,35 +1252,37 @@
 	/* ---------- Actions ---------- */
 
 	function removeRow(id) {
+		var term = cur();
 		var index = -1;
-		for (var i = 0; i < state.rows.length; i++) {
-			if (state.rows[i].id === id) index = i;
+		for (var i = 0; i < term.rows.length; i++) {
+			if (term.rows[i].id === id) index = i;
 		}
 		if (index < 0) return;
-		var removed = state.rows[index];
+		var removed = term.rows[index];
 		var label = rowLabel(removed);
-		state.rows = state.rows.filter(function (r) { return r.id !== id; });
+		term.rows = term.rows.filter(function (r) { return r.id !== id; });
 		saveState();
-		render();
+		render({ quiet: true });
 		haptic();
 		showToast("Removed " + label, function () {
-			state.rows.splice(Math.min(index, state.rows.length), 0, removed);
+			term.rows.splice(Math.min(index, term.rows.length), 0, removed);
 			saveState();
-			render();
+			render({ quiet: true });
 		});
 	}
 
 	function clearAll() {
-		if (state.rows.length === 0) return;
-		var previous = state.rows;
-		state.rows = [];
+		var term = cur();
+		if (term.rows.length === 0) return;
+		var previous = term.rows;
+		term.rows = [];
 		saveState();
-		render();
+		render({ quiet: true });
 		haptic();
-		showToast("Cleared all subjects", function () {
-			state.rows = previous;
+		showToast("Cleared " + term.name, function () {
+			term.rows = previous;
 			saveState();
-			render();
+			render({ quiet: true, entering: true });
 		});
 	}
 

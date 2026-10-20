@@ -50,6 +50,8 @@
 			</button>
 		</header>
 
+		<nav class="terms" id="terms" aria-label="Semesters"></nav>
+
 		<div class="side">
 			<section class="hero" id="hero" aria-labelledby="hero-label">
 				<div class="hero-top">
@@ -86,6 +88,10 @@
 					<div class="stat">
 						<dt>Subjects</dt>
 						<dd id="stat-subjects">0</dd>
+					</div>
+					<div class="stat" id="stat-overall-wrap" hidden>
+						<dt>Overall</dt>
+						<dd id="stat-overall">0.00</dd>
 					</div>
 				</dl>
 			</section>
@@ -137,6 +143,7 @@
 			<div class="grabber" aria-hidden="true"></div>
 			<div class="sheet-head">
 				<h2 class="sheet-title" id="editor-title">New subject</h2>
+				<span class="sheet-gwa">GWA <b id="editor-gwa">0.00</b></span>
 				<button type="button" class="icon-btn" id="editor-close" aria-label="Close">
 					<svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
 				</button>
@@ -165,6 +172,50 @@
 					<span id="editor-primary-text">Next subject</span>
 					<svg class="icon" id="editor-primary-icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
 				</button>
+			</div>
+		</div>
+	</dialog>
+
+	<!-- Quick grade: tap a subject's grade to change just that -->
+	<dialog class="sheet" id="quick" aria-labelledby="quick-title">
+		<div class="sheet-inner">
+			<div class="grabber" aria-hidden="true"></div>
+			<div class="sheet-head">
+				<h2 class="sheet-title" id="quick-title">Grade</h2>
+				<span class="sheet-gwa">GWA <b id="quick-gwa">0.00</b></span>
+				<button type="button" class="icon-btn" id="quick-close" aria-label="Close">
+					<svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+				</button>
+			</div>
+			<div class="sheet-body">
+				<div class="choice-grid grade-grid" id="quick-grid" role="radiogroup" aria-label="Grade"></div>
+			</div>
+			<div class="sheet-actions is-single">
+				<button type="button" class="btn btn-secondary" id="quick-more">Edit name and units</button>
+			</div>
+		</div>
+	</dialog>
+
+	<!-- Semester name -->
+	<dialog class="sheet" id="term-sheet" aria-labelledby="term-title">
+		<div class="sheet-inner">
+			<div class="grabber" aria-hidden="true"></div>
+			<div class="sheet-head">
+				<h2 class="sheet-title" id="term-title">Semester</h2>
+				<button type="button" class="icon-btn" id="term-close" aria-label="Close">
+					<svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+				</button>
+			</div>
+			<div class="sheet-body">
+				<div class="field-group">
+					<label class="field-label" for="term-name">Name</label>
+					<input class="text-input" id="term-name" type="text" maxlength="30" autocomplete="off" enterkeyhint="done" placeholder="e.g. 1st Semester 2025-2026" />
+					<div class="suggest" id="term-suggest"></div>
+				</div>
+			</div>
+			<div class="sheet-actions">
+				<button type="button" class="btn btn-danger" id="term-delete">Delete</button>
+				<button type="button" class="btn btn-primary" id="term-done">Done</button>
 			</div>
 		</div>
 	</dialog>
