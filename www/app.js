@@ -62,6 +62,12 @@
 		menuTitle: $("menu-title"),
 		menuClose: $("menu-close"),
 		menuList: $("menu-list"),
+		shareSheet: $("share-sheet"),
+		shareClose: $("share-close"),
+		shareCancel: $("share-cancel"),
+		shareGo: $("share-go"),
+		shareName: $("share-name"),
+		sharePreview: $("share-preview"),
 		importTarget: $("import-target"),
 		importTargetChips: $("import-target-chips"),
 		themeColor: document.querySelector('meta[name="theme-color"]'),
@@ -186,6 +192,7 @@
 				var theme = saved.theme === "system" || saved.theme === "light" || saved.theme === "dark" ? saved.theme :
 					typeof saved.isDark === "boolean" ? (saved.isDark ? "dark" : "light") : "system";
 				s = {
+					name: typeof saved.name === "string" ? saved.name.slice(0, 40) : "",
 					theme: theme,
 					isDark: false,
 					terms: terms,
@@ -195,7 +202,7 @@
 		} catch (e) {
 			/* storage unavailable or corrupted: start fresh */
 		}
-		if (!s) s = { theme: "system", isDark: false, terms: [{ id: 0, name: TERM_NAMES[0], rows: [] }], active: 0 };
+		if (!s) s = { name: "", theme: "system", isDark: false, terms: [{ id: 0, name: TERM_NAMES[0], rows: [] }], active: 0 };
 		// Subject ids are unique across all semesters.
 		var seen = {}, next = 0;
 		s.terms.forEach(function (t) { t.rows.forEach(function (r) { next = Math.max(next, r.id + 1); }); });
@@ -1630,10 +1637,22 @@
 		ctx.font = "600 46px " + font;
 		ctx.fillText("GCalc", X + (logo ? 116 : 0), 152);
 
-		// GWA
+		// Name (shrunk to fit), then which GWA this is
+		var name = (state.name || "").trim();
+		var label = state.terms.length > 1 ? cur().name + " GWA" : name ? "GWA" : "My GWA";
+		if (name) {
+			var size = 68;
+			ctx.font = "700 " + size + "px " + font;
+			while (size > 36 && ctx.measureText(name).width > W - 2 * X) {
+				size -= 2;
+				ctx.font = "700 " + size + "px " + font;
+			}
+			ctx.fillStyle = text;
+			ctx.fillText(name, X, 320);
+		}
 		ctx.fillStyle = muted;
-		ctx.font = "500 48px " + font;
-		ctx.fillText(state.terms.length > 1 ? cur().name : "My GWA", X, 400);
+		ctx.font = "500 46px " + font;
+		ctx.fillText(label, X, name ? 400 : 380);
 		ctx.fillStyle = text;
 		ctx.font = "700 290px " + font;
 		ctx.fillText(out.counted ? formatGwa(out.result) : "0.00", X - 12, 660);
@@ -1701,23 +1720,56 @@
 		ctx.closePath();
 	}
 
+	var shareLogo = null;
+	var previewTimer = 0;
+
+	function drawPreview() {
+		var canvas = shareCard(shareLogo);
+		els.sharePreview.src = canvas.toDataURL("image/png");
+		return canvas;
+	}
+
 	els.shareBtn.addEventListener("click", function () {
 		haptic();
+		els.shareName.value = state.name || "";
 		var ready = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
 		Promise.all([ready, loadIcon()]).then(function (got) {
-			var canvas = shareCard(got[1]);
-			var dataUrl = canvas.toDataURL("image/png");
-			if (window.GCalcAndroid && typeof window.GCalcAndroid.shareImage === "function") {
-				window.GCalcAndroid.shareImage(dataUrl.split(",")[1]);
-				return;
-			}
-			canvas.toBlob(function (blob) {
-				saveFile("my-gwa.png", "image/png", blob, null, function (ok) {
-					if (ok === false) showToast("Could not share the picture");
-				});
-			}, "image/png");
+			shareLogo = got[1];
+			drawPreview();
+			openSheet(els.shareSheet);
 		});
 	});
+
+	els.shareName.addEventListener("input", function () {
+		state.name = els.shareName.value.slice(0, 40);
+		saveState();
+		window.clearTimeout(previewTimer);
+		previewTimer = window.setTimeout(drawPreview, 120);
+	});
+	els.shareName.addEventListener("keydown", function (e) {
+		if (e.key === "Enter") {
+			e.preventDefault();
+			els.shareName.blur();
+		}
+	});
+
+	els.shareGo.addEventListener("click", function () {
+		var canvas = drawPreview();
+		var dataUrl = canvas.toDataURL("image/png");
+		closeSheet(els.shareSheet);
+		if (window.GCalcAndroid && typeof window.GCalcAndroid.shareImage === "function") {
+			window.GCalcAndroid.shareImage(dataUrl.split(",")[1]);
+			return;
+		}
+		canvas.toBlob(function (blob) {
+			saveFile("my-gwa.png", "image/png", blob, null, function (ok) {
+				if (ok === false) showToast("Could not share the picture");
+			});
+		}, "image/png");
+	});
+	els.shareCancel.addEventListener("click", function () { closeSheet(els.shareSheet); });
+	els.shareClose.addEventListener("click", function () { closeSheet(els.shareSheet); });
+	closeOnBackdrop(els.shareSheet);
 
 	/* ---------- Sort subjects ---------- */
 

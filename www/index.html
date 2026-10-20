@@ -336,6 +336,33 @@
 		</div>
 	</dialog>
 
+	<!-- Share your GWA as a picture -->
+	<dialog class="sheet" id="share-sheet" aria-labelledby="share-title">
+		<div class="sheet-inner">
+			<div class="grabber" aria-hidden="true"></div>
+			<div class="sheet-head">
+				<h2 class="sheet-title" id="share-title">Share your GWA</h2>
+				<button type="button" class="icon-btn" id="share-close" aria-label="Close">
+					<svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+				</button>
+			</div>
+			<div class="sheet-body">
+				<img class="share-preview" id="share-preview" alt="Preview of the picture" />
+				<div class="field-group">
+					<label class="field-label" for="share-name">Your name</label>
+					<input class="text-input" id="share-name" type="text" maxlength="40" autocomplete="name" autocapitalize="words" enterkeyhint="done" placeholder="e.g. Juan Dela Cruz" />
+				</div>
+			</div>
+			<div class="sheet-actions">
+				<button type="button" class="btn btn-secondary" id="share-cancel">Cancel</button>
+				<button type="button" class="btn btn-primary" id="share-go">
+					<svg class="icon" aria-hidden="true"><use href="#i-share-network"></use></svg>
+					Share
+				</button>
+			</div>
+		</div>
+	</dialog>
+
 	<!-- Small list of choices (sort) -->
 	<dialog class="sheet" id="menu" aria-labelledby="menu-title">
 		<div class="sheet-inner">

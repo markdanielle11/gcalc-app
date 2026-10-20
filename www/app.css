@@ -279,6 +279,10 @@ button {
 }
 
 .hero-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 	font-size: 0.875rem;
 	line-height: 1.25rem;
 	color: var(--muted);
@@ -1771,6 +1775,23 @@ button {
 	font-size: 0.8125rem;
 	line-height: 1.125rem;
 	color: var(--muted);
+}
+
+.share-preview {
+	display: block;
+	width: 100%;
+	max-width: 15rem;
+	aspect-ratio: 4 / 5;
+	margin: 0 auto;
+	border-radius: var(--radius-group);
+	box-shadow: var(--shadow-soft);
+	background: var(--field);
+}
+
+@media (max-height: 700px) {
+	.share-preview {
+		max-width: 11rem;
+	}
 }
 
 .sheet-body.is-menu {
