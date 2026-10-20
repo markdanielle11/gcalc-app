@@ -1,5 +1,5 @@
 /* Offline cache for the installed web app. Bump VERSION when files change. */
-var VERSION = "gcalc-v12";
+var VERSION = "gcalc-v13";
 var FILES = [
   "./",
   "index.html",
@@ -7,6 +7,7 @@ var FILES = [
   "app.js",
   "manifest.webmanifest",
   "fonts/Outfit.ttf",
+  "vendor/fonts/roboto-subset.ttf",
   "icons/icon.svg",
   "icons/icon-192.png",
   "icons/icon-512.png",

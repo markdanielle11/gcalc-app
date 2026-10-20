@@ -7,3 +7,4 @@
 - **Tesseract.js** and **tesseract.js-core** (offline text recognition for Import), Apache License 2.0, https://github.com/naptha/tesseract.js
 - **tessdata_fast** English model (`eng.traineddata`), Apache License 2.0, https://github.com/tesseract-ocr/tessdata_fast
 - **Google ML Kit Text Recognition** (Android, on-device), used under the ML Kit terms: https://developers.google.com/ml-kit/terms
+- **Roboto** (digits and capitals subset, used to double-check units and grades on Import), SIL Open Font License 1.1 (see `www/vendor/fonts/OFL-Roboto.txt`).

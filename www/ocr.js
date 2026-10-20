@@ -283,6 +283,7 @@
 		// Empty cell? (A lone "1" can be just a couple of pixels wide, so only the
 		// height and the amount of ink decide.)
 		if (count < 12 || maxY - minY < 8) return null;
+		var ink = [minX, minY, maxX, maxY];
 
 		minX = Math.max(x0, minX - 2);
 		minY = Math.max(y0, minY - 2);
@@ -340,7 +341,123 @@
 			return c;
 		}
 
-		return { make: make, small: lineHeight < 30, inkWidth: w - 4, inkHeight: rowsWithInk };
+		return { make: make, small: lineHeight < 30, inkWidth: w - 4, inkHeight: rowsWithInk, ink: ink, prep: prep };
+	}
+
+	/* ---------- Shape check for numbers ----------
+	   The portal prints units and grades in Roboto. Each possible value ("1".."10",
+	   "1.00".."5.00") is drawn in Roboto at the size of the text in the cell and
+	   compared with the cell's pixels; the closest one wins when it is clearly
+	   closer than the rest. Fixes look-alike digits the reader confuses at small
+	   sizes (2.50 / 2.00, 5 / 3). */
+
+	var GLYPH_FONT = "GCalcDigits";
+	var glyphFont = null;
+
+	function loadGlyphFont() {
+		if (!glyphFont) {
+			glyphFont = (async function () {
+				try {
+					var face = new FontFace(GLYPH_FONT, "url(vendor/fonts/roboto-subset.ttf)");
+					await face.load();
+					document.fonts.add(face);
+					return true;
+				} catch (e) {
+					return false;
+				}
+			})();
+		}
+		return glyphFont;
+	}
+
+	function normalize(arr) {
+		var n = arr.length, mean = 0, i;
+		for (i = 0; i < n; i++) mean += arr[i];
+		mean /= n;
+		var sd = 0;
+		for (i = 0; i < n; i++) {
+			arr[i] -= mean;
+			sd += arr[i] * arr[i];
+		}
+		sd = Math.sqrt(sd) || 1;
+		for (i = 0; i < n; i++) arr[i] /= sd;
+		return arr;
+	}
+
+	var templateCache = {};
+
+	/* Gray pixels of `text` drawn in Roboto so its ink is inkH tall, placed in a
+	   w x h box (text centered on cx, top of ink at top). */
+	function drawCandidate(text, w, h, inkH, cx, top) {
+		var c = document.createElement("canvas");
+		c.width = w;
+		c.height = h;
+		var ctx = c.getContext("2d", { willReadFrequently: true });
+		ctx.fillStyle = "#fff";
+		ctx.fillRect(0, 0, w, h);
+		var key = text;
+		var m100 = templateCache[key];
+		if (!m100) {
+			ctx.font = "100px " + GLYPH_FONT;
+			var mm = ctx.measureText(text);
+			m100 = templateCache[key] = { asc: mm.actualBoundingBoxAscent, desc: mm.actualBoundingBoxDescent, left: mm.actualBoundingBoxLeft, right: mm.actualBoundingBoxRight };
+		}
+		var size = 100 * inkH / Math.max(1, m100.asc + m100.desc);
+		ctx.font = size + "px " + GLYPH_FONT;
+		ctx.fillStyle = "#000";
+		ctx.textBaseline = "alphabetic";
+		var k = size / 100;
+		var inkW = (m100.left + m100.right) * k;
+		ctx.fillText(text, cx - inkW / 2 + m100.left * k, top + m100.asc * k);
+		var d = ctx.getImageData(0, 0, w, h).data;
+		var out = new Float32Array(w * h);
+		for (var i = 0; i < w * h; i++) out[i] = d[i * 4];
+		out.inkW = inkW;
+		return out;
+	}
+
+	/* Returns { value, score, margin } for the candidate that best matches the
+	   cell, or null when the font isn't available or the cell is too small. */
+	async function shapeRead(cell, candidates, box) {
+		if (!cell || !cell.ink || !(await loadGlyphFont())) return null;
+		var prep = cell.prep, W = prep.W, g = prep.gray;
+		box = box || cell.ink;
+		var x0 = box[0], y0 = box[1], x1 = box[2], y1 = box[3];
+		var inkH = y1 - y0 + 1;
+		if (inkH < 6 || inkH > 200) return null;
+		var pad = Math.max(2, Math.round(inkH * 0.25));
+		var bx0 = Math.max(0, x0 - pad), by0 = Math.max(0, y0 - pad);
+		var bx1 = Math.min(W - 1, x1 + pad), by1 = Math.min(prep.H - 1, y1 + pad);
+		var w = bx1 - bx0 + 1, h = by1 - by0 + 1;
+		var patch = new Float32Array(w * h);
+		for (var yy = 0; yy < h; yy++) for (var xx = 0; xx < w; xx++) patch[yy * w + xx] = g[(by0 + yy) * W + bx0 + xx];
+		normalize(patch);
+		var cx = (x0 + x1) / 2 - bx0, top = y0 - by0;
+		var boxW = x1 - x0 + 1;
+		var scored = candidates.map(function (cand) {
+			var t = drawCandidate(cand.text, w, h, inkH, cx, top);
+			var widthOff = Math.abs(t.inkW - boxW) / boxW;
+			t = normalize(t);
+			var s = 0;
+			for (var i = 0; i < t.length; i++) s += t[i] * patch[i];
+			// A candidate much wider or narrower than the text can't be it.
+			if (widthOff > 0.2) s -= 0.5;
+			return { value: cand.value, text: cand.text, score: s };
+		}).sort(function (a, b) { return b.score - a.score; });
+		var best = scored[0], second = scored[1] || { score: 0 };
+		if (window.GCALC_DEBUG) console.log("shape " + scored.slice(0, 3).map(function (x) { return x.text + "=" + x.score.toFixed(3); }).join(" "));
+		return { value: best.value, score: best.score, margin: best.score - second.score };
+	}
+
+	var UNIT_CANDIDATES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (u) { return { value: u, text: String(u) }; });
+	var GRADE_CANDIDATES = ["1.00", "1.25", "1.50", "1.75", "2.00", "2.25", "2.50", "2.75", "3.00", "4.00", "5.00"].map(function (g) { return { value: parseFloat(g), text: g }; });
+
+	/* Use the shape check when it is confident; otherwise keep the reader's value. */
+	async function confirmNumber(cell, value, candidates) {
+		var s = await shapeRead(cell, candidates);
+		if (!s) return value;
+		if (s.score >= 0.7 && s.margin >= 0.05) return s.value;
+		return value;
 	}
 
 	function toGrade(token) {
@@ -550,8 +667,12 @@
 							u1 = { best: { value: 1 }, raw: u1.raw };
 						}
 					}
+					if (!u1.best && !u1.raw.some(hasWords)) {
+						var su = await shapeRead(cell, UNIT_CANDIDATES);
+						if (su && su.score >= 0.8 && su.margin >= 0.06) u1 = { best: { value: su.value }, raw: u1.raw };
+					}
 					if (u1.best) {
-						units = u1.best.value;
+						units = await confirmNumber(cell, u1.best.value, UNIT_CANDIDATES);
 						phase = "grade";
 					} else {
 						var asGrade = u1.raw.map(gradeFromText).filter(Boolean)[0];
@@ -571,6 +692,7 @@
 						var g2 = await bestRead(worker, cell, ["7", "8"], gradeFromText, "0123456789.,");
 						if (g2.best) grade = g2.best.value;
 					}
+					if (grade) grade = await confirmNumber(cell, grade, GRADE_CANDIDATES);
 					break; // first cell after units is the grade (or "NOT YET")
 				}
 			}
@@ -906,7 +1028,7 @@
 						if (u1.best) u = u1.best.value;
 					}
 					if (u) {
-						units = u;
+						units = await confirmNumber(cell, u, UNIT_CANDIDATES);
 						phase = "grade";
 					} else {
 						if (gradeFromText(text) && !hasWords(text)) {
@@ -925,6 +1047,7 @@
 							if (!g1.best && !g1.raw.some(hasWords)) g1 = await bestRead(gw, cell, ["7", "8"], gradeFromText, "0123456789.,");
 							if (g1.best) grade = g1.best.value;
 						}
+						if (grade) grade = await confirmNumber(cell, grade, GRADE_CANDIDATES);
 					}
 					break; // first cell after units is the grade (or "NOT YET")
 				}
@@ -1039,5 +1162,5 @@
 		}
 	}
 
-	window.GCalcOCR = { read: read, parse: parse, parseLayout: parseLayout, _prepare: prepare, _cropCell: cropCell };
+	window.GCalcOCR = { read: read, parse: parse, parseLayout: parseLayout, _prepare: prepare, _cropCell: cropCell, _shapeRead: shapeRead, _drawCandidate: drawCandidate, _loadGlyphFont: loadGlyphFont };
 })();
