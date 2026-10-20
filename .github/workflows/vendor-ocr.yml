@@ -1,0 +1,60 @@
+name: Vendor OCR library
+
+# Copies Tesseract.js (offline text recognition) into www/vendor so the app
+# can read grade screenshots without internet. Runs when this file changes,
+# or by hand from the Actions tab.
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/vendor-ocr.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  TESSERACT_VERSION: "5.1.1"
+  TESSERACT_CORE_VERSION: "5.1.1"
+
+jobs:
+  vendor:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Download packages
+        run: |
+          mkdir -p "$RUNNER_TEMP/pkgs" && cd "$RUNNER_TEMP/pkgs"
+          npm pack "tesseract.js@${TESSERACT_VERSION}" "tesseract.js-core@${TESSERACT_CORE_VERSION}"
+          for f in *.tgz; do mkdir -p "${f%.tgz}" && tar -xzf "$f" -C "${f%.tgz}"; done
+          ls -la */package/dist */package 2>/dev/null | head -80
+
+      - name: Copy files into www/vendor
+        run: |
+          set -e
+          P="$RUNNER_TEMP/pkgs"
+          OUT=www/vendor/tesseract
+          rm -rf "$OUT" && mkdir -p "$OUT/core"
+          cp "$P"/tesseract.js-${TESSERACT_VERSION}/package/dist/tesseract.min.js "$OUT/"
+          cp "$P"/tesseract.js-${TESSERACT_VERSION}/package/dist/worker.min.js "$OUT/"
+          cp "$P"/tesseract.js-${TESSERACT_VERSION}/package/LICENSE.md "$OUT/LICENSE-tesseract.js.md" 2>/dev/null || cp "$P"/tesseract.js-${TESSERACT_VERSION}/package/LICENSE* "$OUT/" || true
+          # LSTM-only builds (smaller, all the app needs)
+          cp "$P"/tesseract.js-core-${TESSERACT_CORE_VERSION}/package/tesseract-core-lstm.wasm.js "$OUT/core/"
+          cp "$P"/tesseract.js-core-${TESSERACT_CORE_VERSION}/package/tesseract-core-simd-lstm.wasm.js "$OUT/core/"
+          cp "$P"/tesseract.js-core-${TESSERACT_CORE_VERSION}/package/LICENSE "$OUT/core/LICENSE-tesseract.js-core" || true
+          echo "${TESSERACT_VERSION} / core ${TESSERACT_CORE_VERSION}" > "$OUT/VERSION.txt"
+          ls -la "$OUT" "$OUT/core"
+          ls -la "$P"/tesseract.js-core-${TESSERACT_CORE_VERSION}/package/
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add www/vendor
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Vendor Tesseract.js ${TESSERACT_VERSION} for offline OCR"
+          git push
