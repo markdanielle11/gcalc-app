@@ -1,5 +1,5 @@
 <resources>
     <color name="gcalc_dark_background">#131B31</color>
     <color name="gcalc_light_background">#EEF2FB</color>
-    <color name="ic_launcher_background">#1E2B4D</color>
+    <color name="ic_launcher_background">#131B31</color>
 </resources>

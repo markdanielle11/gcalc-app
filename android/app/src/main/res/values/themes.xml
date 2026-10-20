@@ -3,6 +3,6 @@
         <item name="android:windowBackground">@color/gcalc_dark_background</item>
         <item name="android:statusBarColor">@color/gcalc_dark_background</item>
         <item name="android:navigationBarColor">@color/gcalc_dark_background</item>
-        <item name="android:colorAccent">#C39A32</item>
+        <item name="android:colorAccent">#D2A73F</item>
     </style>
 </resources>

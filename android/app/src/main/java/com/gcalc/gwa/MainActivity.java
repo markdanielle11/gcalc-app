@@ -64,10 +64,12 @@ public class MainActivity extends Activity {
     private static final int DARK_BG = Color.parseColor("#131B31");
     private static final int LIGHT_BG = Color.parseColor("#EEF2FB");
     private static final int REQUEST_FILE = 41;
+    private static final int REQUEST_SAVE = 42;
 
     private FrameLayout root;
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
+    private byte[] pendingSave;
     private TextRecognizer textRecognizer;
 
     @Override
@@ -181,7 +183,13 @@ public class MainActivity extends Activity {
             fileCallback = callback;
             Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("image/*");
+            // Screenshots for Import; any file for restoring a backup (.json has no
+            // reliable type on Android, so it isn't filtered).
+            boolean images = false;
+            for (String type : params.getAcceptTypes()) {
+                if (type != null && type.startsWith("image")) images = true;
+            }
+            intent.setType(images ? "image/*" : "*/*");
             try {
                 startActivityForResult(Intent.createChooser(intent, null), REQUEST_FILE);
                 return true;
@@ -200,6 +208,24 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQUEST_SAVE) {
+            boolean ok = false;
+            byte[] bytes = pendingSave;
+            pendingSave = null;
+            if (resultCode == RESULT_OK && data != null && data.getData() != null && bytes != null) {
+                try (java.io.OutputStream out = getContentResolver().openOutputStream(data.getData(), "wt")) {
+                    if (out != null) {
+                        out.write(bytes);
+                        ok = true;
+                    }
+                } catch (IOException e) {
+                    Log.w(TAG, "save failed", e);
+                }
+            }
+            final String js = "window.GCalcSaved && window.GCalcSaved(" + (resultCode == RESULT_OK ? String.valueOf(ok) : "null") + ")";
+            webView.post(() -> webView.evaluateJavascript(js, null));
+            return;
+        }
         if (requestCode == REQUEST_FILE) {
             if (fileCallback != null) {
                 fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
@@ -266,6 +292,52 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public boolean nativeTextAvailable() {
             return true;
+        }
+
+        /** Asks where to save a file (a backup), then writes it. Reports to window.GCalcSaved(ok). */
+        @JavascriptInterface
+        public void saveFile(final String name, final String mime, final String base64) {
+            runOnUiThread(() -> {
+                pendingSave = Base64.decode(base64, Base64.DEFAULT);
+                Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType(mime);
+                intent.putExtra(Intent.EXTRA_TITLE, name);
+                try {
+                    startActivityForResult(intent, REQUEST_SAVE);
+                } catch (ActivityNotFoundException e) {
+                    pendingSave = null;
+                    webView.evaluateJavascript("window.GCalcSaved && window.GCalcSaved(false)", null);
+                }
+            });
+        }
+
+        /** Opens the share sheet with a picture of the GWA. */
+        @JavascriptInterface
+        public void shareImage(final String base64) {
+            try {
+                java.io.File dir = new java.io.File(getCacheDir(), "share");
+                if (!dir.isDirectory() && !dir.mkdirs()) return;
+                java.io.File file = new java.io.File(dir, "my-gwa.png");
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+                    out.write(Base64.decode(base64, Base64.DEFAULT));
+                }
+                final Uri uri = Uri.parse("content://" + ShareProvider.AUTHORITY + "/my-gwa.png");
+                runOnUiThread(() -> {
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType("image/png");
+                    send.putExtra(Intent.EXTRA_STREAM, uri);
+                    send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    send.setClipData(android.content.ClipData.newRawUri("", uri));
+                    try {
+                        startActivity(Intent.createChooser(send, null));
+                    } catch (ActivityNotFoundException e) {
+                        Log.w(TAG, "no app to share with", e);
+                    }
+                });
+            } catch (IOException e) {
+                Log.w(TAG, "share failed", e);
+            }
         }
 
         /**

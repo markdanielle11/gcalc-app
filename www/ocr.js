@@ -806,6 +806,7 @@
 						phase = "units";
 					} else {
 						var rawText = (seenText.raw || []).join(" ");
+						if (prep.notes && rawText.length > 6) prep.notes.push(rawText);
 						if (/TOTAL/i.test(rawText)) {
 							totalRow = { band: band };
 							break;
@@ -1148,7 +1149,7 @@
 
 	/* The prepared screenshot in grayscale with the table lines removed: what the
 	   AI reader sees in table mode (lines make it glue "|" onto codes, "ISTAT"). */
-	function grayCanvas(prep) {
+	function grayCanvas(prep, maxPixels) {
 		var c = document.createElement("canvas");
 		c.width = prep.W;
 		c.height = prep.H;
@@ -1160,7 +1161,21 @@
 			d[i * 4 + 3] = 255;
 		}
 		ctx.putImageData(img, 0, 0);
-		return c;
+		// Tall phone screenshots are enlarged a lot for the cell reader; the AI reader
+		// reads them as well at a smaller size, and much faster.
+		var k = maxPixels ? Math.sqrt(maxPixels / (prep.W * prep.H)) : 1;
+		if (k >= 1) return c;
+		var small = document.createElement("canvas");
+		small.width = Math.round(prep.W * k);
+		small.height = Math.round(prep.H * k);
+		var sctx = small.getContext("2d");
+		sctx.imageSmoothingQuality = "high";
+		sctx.drawImage(c, 0, 0, small.width, small.height);
+		return small;
+	}
+
+	function layoutText(layout) {
+		return ((layout && layout.lines) || []).map(function (l) { return l.text; }).join(" ");
 	}
 
 	/* ---------- AI table mode: the AI reads the page, the grid says which cell
@@ -1272,6 +1287,17 @@
 							m = null;
 						}
 					}
+					if (!name && m && m.index <= 3 && cell && /^\d{1,2}$/.test(m.name.split(" ")[1] || "") && KNOWN_PREFIXES[fixPrefix(m.name.split(" ")[0])]) {
+						// A short number ("PHILI 11") may have lost its last digits: when
+						// Tesseract reads the same code with a longer number, take that.
+						var shortNo = m.name.split(" ")[1];
+						var tLong = await readSubject(await getTesseract(), cell);
+						var tp = tLong ? tLong.split(" ") : [];
+						if (tp[0] === fixPrefix(m.name.split(" ")[0]) && tp[1] && tp[1].length > shortNo.length && tp[1].indexOf(shortNo) === 0) {
+							name = tLong;
+							m = null;
+						}
+					}
 					if (!name && m && m.index <= 3) {
 						var mp = m.name.split(" ");
 						name = fixPrefix(mp[0]) + " " + mp.slice(1).join(" ");
@@ -1376,7 +1402,7 @@
 				timing.prepare = lap();
 				if (aiPrep.grid) {
 					report(0.25, "Reading text");
-					var gridLayout = await readNativeBase64(grayCanvas(aiPrep).toDataURL("image/png").split(",")[1]);
+					var gridLayout = await readNativeBase64(grayCanvas(aiPrep, 4.5e6).toDataURL("image/png").split(",")[1]);
 					timing.ai = lap();
 					var getTesseract = async function () {
 						if (!aiHandle) aiHandle = await takeWorker();
@@ -1386,7 +1412,7 @@
 					timing.check = lap();
 					if (tableRows.length) {
 						report(1, "Done");
-						return { rows: tableRows, mode: "ai", timing: timing, layout: window.GCALC_DEBUG ? gridLayout : undefined };
+						return { rows: tableRows, mode: "ai", timing: timing, headerText: layoutText(gridLayout), layout: window.GCALC_DEBUG ? gridLayout : undefined };
 					}
 				}
 			} catch (e) {
@@ -1403,7 +1429,7 @@
 				if (aiRows.length) {
 					report(1, "Done");
 					timing.ai2 = lap();
-					return { rows: aiRows, mode: "ai", timing: timing, layout: window.GCALC_DEBUG ? layout : undefined };
+					return { rows: aiRows, mode: "ai", timing: timing, headerText: layoutText(layout), layout: window.GCALC_DEBUG ? layout : undefined };
 				}
 			} catch (e) {
 				if (window.GCALC_DEBUG) console.log("native reader failed: " + e.message);
@@ -1437,6 +1463,7 @@
 		var handle = null, broken = false;
 		try {
 			var prep = prepare(img, maxPixels);
+			prep.notes = [];
 			timing.prepare = lap();
 			report(0.1, "Starting the reader");
 			handle = await handlePromise;
@@ -1449,7 +1476,7 @@
 				timing.table = lap();
 				if (tableRows.length) {
 					report(1, "Done");
-					return { rows: tableRows, mode: "table", timing: timing };
+					return { rows: tableRows, mode: "table", timing: timing, headerText: prep.notes.join(" ") };
 				}
 			}
 
@@ -1458,7 +1485,7 @@
 			var result = await worker.recognize(prep.canvas);
 			timing.lines = lap();
 			report(1, "Done");
-			return { rows: parse(result.data.text || ""), mode: "lines", timing: timing };
+			return { rows: parse(result.data.text || ""), mode: "lines", timing: timing, headerText: result.data.text || "" };
 		} catch (e) {
 			broken = isMemoryError(e);
 			if (!handle) handlePromise.then(function (h) { giveWorker(h, broken); }, function () {});

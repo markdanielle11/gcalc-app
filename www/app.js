@@ -16,6 +16,13 @@
 	var TOAST_MS = 5000;
 	var TERM_NAMES = ["1st Semester", "2nd Semester", "Midyear"];
 	var STANDING_RANK = { "": 0, "Dean's Lister": 1, "College Scholar": 2, "University Scholar": 3 };
+	var HONORS = [
+		{ name: "Dean's Lister", max: 2.0 },
+		{ name: "College Scholar", max: 1.75 },
+		{ name: "University Scholar", max: 1.5 }
+	];
+	// NSTP (and its CWTS / ROTC / LTS components) is not part of the GWA.
+	var NOT_COUNTED = /^\s*(NSTP|CWTS|ROTC|LTS)(\b|\d)/i;
 
 	function $(id) {
 		return document.getElementById(id);
@@ -39,7 +46,24 @@
 		empty: $("empty"),
 		add: $("add-btn"),
 		clear: $("clear-btn"),
-		themeBtn: $("theme-btn"),
+		settingsBtn: $("settings-btn"),
+		shareBtn: $("share-btn"),
+		goals: $("goals"),
+		goalsText: $("goals-text"),
+		goalsList: $("goals-list"),
+		sortBtn: $("sort-btn"),
+		settings: $("settings"),
+		settingsClose: $("settings-close"),
+		themeChoice: $("theme-choice"),
+		backupSave: $("backup-save"),
+		backupRestore: $("backup-restore"),
+		backupInput: $("backup-input"),
+		menu: $("menu"),
+		menuTitle: $("menu-title"),
+		menuClose: $("menu-close"),
+		menuList: $("menu-list"),
+		importTarget: $("import-target"),
+		importTargetChips: $("import-target-chips"),
 		themeColor: document.querySelector('meta[name="theme-color"]'),
 		minibar: $("minibar"),
 		miniGwa: $("mini-gwa"),
@@ -131,9 +155,19 @@
 	}
 
 	function loadState() {
+		var saved = null;
+		try {
+			saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY));
+		} catch (e) {
+			/* storage unavailable or corrupted: start fresh */
+		}
+		return loadFrom(saved);
+	}
+
+	/* Turns saved data (or a backup file) into a clean state. */
+	function loadFrom(saved) {
 		var s = null;
 		try {
-			var saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY));
 			if (saved && typeof saved === "object") {
 				var terms;
 				if (Array.isArray(saved.terms) && saved.terms.length) {
@@ -149,8 +183,11 @@
 					// Saved before semesters existed: everything becomes the first semester.
 					terms = [{ id: 0, name: TERM_NAMES[0], rows: cleanRows(saved.rows) }];
 				}
+				var theme = saved.theme === "system" || saved.theme === "light" || saved.theme === "dark" ? saved.theme :
+					typeof saved.isDark === "boolean" ? (saved.isDark ? "dark" : "light") : "system";
 				s = {
-					isDark: typeof saved.isDark === "boolean" ? saved.isDark : systemPrefersDark(),
+					theme: theme,
+					isDark: false,
 					terms: terms,
 					active: typeof saved.active === "number" ? saved.active : terms[0].id
 				};
@@ -158,7 +195,7 @@
 		} catch (e) {
 			/* storage unavailable or corrupted: start fresh */
 		}
-		if (!s) s = { isDark: systemPrefersDark(), terms: [{ id: 0, name: TERM_NAMES[0], rows: [] }], active: 0 };
+		if (!s) s = { theme: "system", isDark: false, terms: [{ id: 0, name: TERM_NAMES[0], rows: [] }], active: 0 };
 		// Subject ids are unique across all semesters.
 		var seen = {}, next = 0;
 		s.terms.forEach(function (t) { t.rows.forEach(function (r) { next = Math.max(next, r.id + 1); }); });
@@ -219,8 +256,8 @@
 		var totalUnits = 0;
 		var counted = 0;
 		rows.forEach(function (row) {
-			// Only rows with both a grade and units count toward the GWA.
-			if (row.grades > 0 && row.units > 0) {
+			// Only rows with both a grade and units count toward the GWA (NSTP never does).
+			if (row.grades > 0 && row.units > 0 && isCounted(row)) {
 				totalGrades += row.grades * row.units;
 				totalUnits += row.units;
 				counted++;
@@ -262,6 +299,24 @@
 
 	function rowLabel(row) {
 		return row.name.trim() || defaultName(row);
+	}
+
+	function isCounted(row) {
+		return !NOT_COUNTED.test(row.name);
+	}
+
+	/* Usual units for a subject code, so they don't have to be picked by hand. */
+	function suggestUnits(name) {
+		var n = name.toUpperCase().replace(/\s+/g, " ").trim();
+		if (!/[A-Z]{2,}\s*\d/.test(n)) return 0;
+		if (NOT_COUNTED.test(n)) return 3;
+		if (/^(PATHFIT|PE)\s*\d/.test(n)) return 2;
+		if (/\bLAB\b|\d+L$/.test(n)) return 1;
+		return 3;
+	}
+
+	function unitsText(row) {
+		return plural(row.units, "unit") + (isCounted(row) ? "" : " \u00b7 Not in GWA");
 	}
 
 	// Honors-level grades get the accent, failing grades red.
@@ -493,17 +548,18 @@
 		var btn = el("button", "subject-btn");
 		btn.type = "button";
 		var name = row.name.trim();
-		btn.setAttribute("aria-label", rowLabel(row) + ", " + plural(row.units, "unit") + ". Edit");
+		btn.setAttribute("aria-label", rowLabel(row) + ", " + unitsText(row) + ". Edit");
 		var text = el("span", "subject-text");
 		text.appendChild(el("span", "subject-name" + (name ? "" : " is-placeholder"), rowLabel(row)));
-		text.appendChild(el("span", "subject-units", plural(row.units, "unit")));
+		text.appendChild(el("span", "subject-units", unitsText(row)));
 		btn.appendChild(text);
+		if (!isCounted(row)) li.classList.add("is-uncounted");
 		btn.addEventListener("click", function () {
 			if (li.dataset.swiped) return;
 			openEditor(row.id, false);
 		});
 
-		var gradeBtn = el("button", "grade-pill" + (row.grades === 0 ? " is-empty" : gradeTier(row.grades)),
+		var gradeBtn = el("button", "grade-pill" + (row.grades === 0 ? " is-empty" : isCounted(row) ? gradeTier(row.grades) : ""),
 			row.grades === 0 ? "Set grade" : row.grades.toFixed(2));
 		gradeBtn.type = "button";
 		gradeBtn.setAttribute("aria-label", (row.grades === 0 ? "Set grade" : "Grade " + row.grades.toFixed(2) + ", change") + " for " + rowLabel(row));
@@ -618,6 +674,8 @@
 		els.statOverallWrap.hidden = state.terms.length < 2;
 		els.statOverall.textContent = overall.counted === 0 ? "0.00" : formatGwa(overall.result);
 
+		renderGoals();
+
 		els.miniGwa.textContent = text;
 		els.miniStanding.textContent = out.academic;
 		els.miniStanding.hidden = out.academic === "";
@@ -632,6 +690,40 @@
 			haptic(30);
 		}
 		lastRank = rank;
+	}
+
+	/* For subjects still without a grade: the average grade they need for each honor. */
+	function renderGoals() {
+		var rows = cur().rows.filter(isCounted);
+		var gradedUnits = 0, sum = 0, openUnits = 0, open = 0;
+		rows.forEach(function (r) {
+			if (r.grades > 0) {
+				gradedUnits += r.units;
+				sum += r.grades * r.units;
+			} else {
+				openUnits += r.units;
+				open++;
+			}
+		});
+		var total = gradedUnits + openUnits;
+		var show = open > 0 && total > HONORS_MIN_UNITS;
+		els.goals.hidden = !show;
+		if (!show) return;
+		els.goalsText.textContent = "Average grade needed in your " + plural(open, "subject") + " without a grade";
+		els.goalsList.textContent = "";
+		var passing = GRADE_VALUES.filter(function (g) { return g <= 3; });
+		HONORS.slice().reverse().forEach(function (h) {
+			var limit = (h.max * total - sum) / openUnits + 1e-9;
+			var fit = passing.filter(function (g) { return g <= limit; });
+			var li = el("li", "goal");
+			li.appendChild(el("span", "goal-name", h.name));
+			var need;
+			if (!fit.length) need = el("span", "goal-need is-out", "Out of reach");
+			else if (fit[fit.length - 1] >= 3) need = el("span", "goal-need is-easy", "Any passing grade");
+			else need = el("span", "goal-need", fit[fit.length - 1].toFixed(2) + " or better");
+			li.appendChild(need);
+			els.goalsList.appendChild(li);
+		});
 	}
 
 	// Counts the GWA up or down to its new value, so a change is easy to follow.
@@ -673,10 +765,13 @@
 	}
 
 	function applyTheme() {
-		var dark = state.isDark;
+		var dark = state.theme === "system" ? systemPrefersDark() : state.theme === "dark";
+		state.isDark = dark; // read before first paint (index.html)
 		els.root.classList.toggle("theme-dark", dark);
 		els.root.classList.toggle("theme-light", !dark);
-		els.themeBtn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+		Array.prototype.forEach.call(els.themeChoice.children, function (b) {
+			b.setAttribute("aria-checked", String(b.dataset.theme === state.theme));
+		});
 		var bg = dark ? "#131B31" : "#EEF2FB";
 		if (els.themeColor) els.themeColor.setAttribute("content", bg);
 		// Lets the Android app color its status and navigation bars to match.
@@ -789,6 +884,7 @@
 
 		buildChoices(els.unitsGrid, unitValues(), row.units, String, function (u) {
 			row.units = u;
+			if (editing) editing.unitsPicked = true;
 			saveState();
 			render();
 		});
@@ -862,8 +958,18 @@
 		var row = editing && findRow(editing.id);
 		if (!row) return;
 		row.name = els.nameInput.value;
+		// New subject: fill in the usual units for the code until units are picked by hand.
+		if (editing.isNew && !editing.unitsPicked) {
+			var u = suggestUnits(row.name);
+			if (u && u !== row.units) {
+				row.units = u;
+				Array.prototype.forEach.call(els.unitsGrid.children, function (c) {
+					c.setAttribute("aria-checked", String(Number(c.textContent) === u));
+				});
+			}
+		}
 		saveState();
-		renderList();
+		render({ quiet: true });
 	});
 
 	els.nameInput.addEventListener("keydown", function (e) {
@@ -959,6 +1065,61 @@
 	var importFound = [];    // rows read from the image
 	var importPicked = [];   // true/false per row
 	var importOpen = -1;     // row whose details are open for fixing
+	var importTarget = null; // { id } of a semester, or { name } of a new one
+	var importDetected = null;
+
+	/* "1ST SEMESTER 2025-2026" on the screenshot -> "1st Semester 2025-2026". */
+	function detectSemester(text) {
+		var t = String(text || "").toUpperCase();
+		var name = null;
+		if (/\b(1ST|IST|LST|FIRST)\s*SEM/.test(t)) name = "1st Semester";
+		else if (/\b(2ND|ZND|SECOND)\s*SEM/.test(t)) name = "2nd Semester";
+		else if (/MID\s*-?\s*YEAR|SUMMER/.test(t)) name = "Midyear";
+		if (!name) return null;
+		var y = t.match(/(20\d\d)\s*-\s*(20\d\d)/);
+		var year = y && Number(y[2]) === Number(y[1]) + 1 ? y[1] + "-" + y[2] : "";
+		return { base: name, full: year ? name + " " + year : name };
+	}
+
+	function sameName(a, b) {
+		return a.trim().toLowerCase() === b.trim().toLowerCase();
+	}
+
+	function pickImportTarget(found) {
+		if (!found) return { id: state.active };
+		var exact = state.terms.filter(function (t) { return sameName(t.name, found.full); })[0];
+		if (exact) return { id: exact.id };
+		// "1st Semester" without a year: the same semester, unless it already has subjects of its own.
+		var base = state.terms.filter(function (t) { return sameName(t.name, found.base) && t.rows.length === 0; })[0];
+		if (base) return { id: base.id };
+		var active = cur();
+		if (active.rows.length === 0 && /^Semester \d+$|^1st Semester$|^2nd Semester$|^Midyear$/.test(active.name) && sameName(active.name, found.base)) return { id: active.id };
+		return { name: found.full };
+	}
+
+	function renderImportTarget() {
+		var chips = els.importTargetChips;
+		chips.textContent = "";
+		var options = state.terms.map(function (t) { return { id: t.id, label: t.name }; });
+		if (importDetected && !state.terms.some(function (t) { return sameName(t.name, importDetected.full); })) {
+			options.push({ name: importDetected.full, label: importDetected.full, isNew: true });
+		}
+		els.importTarget.classList.toggle("is-only", options.length < 2);
+		options.forEach(function (o) {
+			var on = importTarget && (o.isNew ? !!importTarget.name : importTarget.id === o.id);
+			var b = el("button", "term-chip" + (on ? " is-active" : "") + (o.isNew ? " is-new" : ""));
+			b.type = "button";
+			b.setAttribute("aria-pressed", String(!!on));
+			if (o.isNew) b.appendChild(icon("plus"));
+			b.appendChild(el("span", "", o.label));
+			b.addEventListener("click", function () {
+				importTarget = o.isNew ? { name: o.name } : { id: o.id };
+				haptic();
+				renderImportTarget();
+			});
+			chips.appendChild(b);
+		});
+	}
 	var previewUrl = null;
 
 	function normName(name) {
@@ -968,6 +1129,7 @@
 	function setImportView(view) {
 		els.importProgress.hidden = view !== "working";
 		els.importList.hidden = view !== "review";
+		els.importTarget.hidden = view !== "review";
 		els.importMessage.hidden = view !== "message";
 		els.importProgress.classList.toggle("is-working", view === "working");
 		els.importer.classList.toggle("is-busy", view === "working");
@@ -1036,11 +1198,11 @@
 		var main = el("button", "import-main");
 		main.type = "button";
 		main.setAttribute("aria-expanded", String(importOpen === i));
-		main.setAttribute("aria-label", row.name + ", " + plural(row.units, "unit") + ", " +
+		main.setAttribute("aria-label", row.name + ", " + unitsText(row) + ", " +
 			(row.grades ? "grade " + row.grades.toFixed(2) : "no grade yet") + ". Fix");
 		var text = el("span", "subject-text");
 		text.appendChild(el("span", "subject-name", row.name));
-		text.appendChild(el("span", "subject-units", plural(row.units, "unit")));
+		text.appendChild(el("span", "subject-units", unitsText(row)));
 		main.appendChild(text);
 		main.appendChild(el("span", "grade-pill" + (row.grades ? gradeTier(row.grades) : " is-empty"),
 			row.grades ? row.grades.toFixed(2) : "No grade yet"));
@@ -1078,7 +1240,7 @@
 				row.units = u;
 				row.unitsFound = true;
 				pickRow(i);
-				main.querySelector(".subject-units").textContent = plural(u, "unit");
+				main.querySelector(".subject-units").textContent = unitsText(row);
 			}));
 
 			edit.appendChild(el("p", "field-label", "Grade"));
@@ -1160,6 +1322,9 @@
 			}
 			importFound = result.rows;
 			importPicked = result.rows.map(function () { return true; });
+			importDetected = detectSemester(result.headerText);
+			importTarget = pickImportTarget(importDetected);
+			renderImportTarget();
 			els.importTitle.textContent = "Found " + plural(result.rows.length, "subject");
 			setImportView("review");
 			renderImportList();
@@ -1173,7 +1338,15 @@
 	function applyImport() {
 		var chosen = importFound.filter(function (r, i) { return importPicked[i]; });
 		if (!chosen.length) return;
-		var term = cur();
+		var term = importTarget && importTarget.id !== undefined ? findTerm(importTarget.id) : null;
+		var created = null;
+		if (!term) {
+			var tid = state.terms.reduce(function (max, t) { return Math.max(max, t.id); }, -1) + 1;
+			created = term = { id: tid, name: (importTarget && importTarget.name) || suggestTermName(), rows: [] };
+			state.terms.push(term);
+		}
+		var wasActive = state.active;
+		state.active = term.id;
 		var previous = term.rows.map(function (r) {
 			return { id: r.id, name: r.name, grades: r.grades, units: r.units };
 		});
@@ -1204,10 +1377,14 @@
 		var parts = [];
 		if (added) parts.push("Added " + plural(added, "subject"));
 		if (updated) parts.push((added ? "updated " : "Updated ") + updated);
+		if (created) parts[parts.length - 1] += " to " + created.name;
 		showToast(parts.join(", "), function () {
 			term.rows = previous;
+			if (created) state.terms = state.terms.filter(function (t) { return t !== created; });
+			state.active = wasActive;
+			if (!findTerm(state.active)) state.active = state.terms[0].id;
 			saveState();
-			render({ quiet: true });
+			render({ quiet: true, entering: true });
 		});
 	}
 
@@ -1288,10 +1465,310 @@
 
 	els.add.addEventListener("click", startNewSubject);
 	els.clear.addEventListener("click", clearAll);
-	els.themeBtn.addEventListener("click", function () {
-		state.isDark = !state.isDark;
-		applyTheme();
+	/* ---------- Settings: theme and backup ---------- */
+
+	els.settingsBtn.addEventListener("click", function () { openSheet(els.settings); });
+	els.settingsClose.addEventListener("click", function () { closeSheet(els.settings); });
+	closeOnBackdrop(els.settings);
+
+	Array.prototype.forEach.call(els.themeChoice.children, function (b) {
+		b.addEventListener("click", function () {
+			state.theme = b.dataset.theme;
+			applyTheme();
+			saveState();
+			haptic();
+		});
+	});
+	try {
+		window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", function () {
+			if (state.theme === "system") {
+				applyTheme();
+				saveState();
+			}
+		});
+	} catch (e) {
+		/* older browsers: picked up on next launch */
+	}
+
+	function today() {
+		var d = new Date();
+		return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
+	}
+
+	function touchDevice() {
+		try {
+			return window.matchMedia("(pointer: coarse)").matches;
+		} catch (e) {
+			return false;
+		}
+	}
+
+	/* Saves a file: the Android app's save dialog, the share sheet on phones, a download elsewhere. */
+	function saveFile(name, type, blob, base64, done) {
+		if (window.GCalcAndroid && typeof window.GCalcAndroid.saveFile === "function") {
+			window.GCalcSaved = function (ok) { done(ok); };
+			window.GCalcAndroid.saveFile(name, type, base64);
+			return;
+		}
+		var file = null;
+		try {
+			file = new File([blob], name, { type: type });
+		} catch (e) { /* old browser */ }
+		if (file && touchDevice() && navigator.canShare && navigator.canShare({ files: [file] })) {
+			navigator.share({ files: [file] }).then(function () { done(true); }, function (err) {
+				done(err && err.name === "AbortError" ? null : false);
+			});
+			return;
+		}
+		var url = URL.createObjectURL(blob);
+		var a = el("a");
+		a.href = url;
+		a.download = name;
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+		window.setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+		done(true);
+	}
+
+	function toBase64(text) {
+		return window.btoa(unescape(encodeURIComponent(text)));
+	}
+
+	els.backupSave.addEventListener("click", function () {
+		var data = JSON.stringify({ app: "gcalc", version: 2, saved: new Date().toISOString(), terms: state.terms, active: state.active }, null, 1);
+		saveFile("gcalc-backup-" + today() + ".json", "application/json", new Blob([data], { type: "application/json" }), toBase64(data), function (ok) {
+			if (ok) showToast("Backup saved");
+			else if (ok === false) showToast("Could not save the backup");
+		});
+	});
+
+	els.backupRestore.addEventListener("click", function () {
+		els.backupInput.value = "";
+		els.backupInput.click();
+	});
+
+	els.backupInput.addEventListener("change", function () {
+		var file = els.backupInput.files && els.backupInput.files[0];
+		if (!file) return;
+		var reader = new FileReader();
+		reader.onload = function () {
+			var data = null;
+			try {
+				data = JSON.parse(String(reader.result));
+			} catch (e) { /* not JSON */ }
+			if (!data || data.app !== "gcalc" || !Array.isArray(data.terms) || !data.terms.length) {
+				showToast("That file is not a GCalc backup");
+				return;
+			}
+			var previous = JSON.stringify({ terms: state.terms, active: state.active });
+			var restored = loadFrom(data);
+			state.terms = restored.terms;
+			state.active = restored.active;
+			saveState();
+			closeSheet(els.settings);
+			render({ quiet: true, entering: true });
+			haptic(14);
+			showToast("Restored " + plural(state.terms.length, "semester"), function () {
+				var back = JSON.parse(previous);
+				state.terms = back.terms;
+				state.active = back.active;
+				saveState();
+				render({ quiet: true, entering: true });
+			});
+		};
+		reader.onerror = function () { showToast("Could not open that file"); };
+		reader.readAsText(file);
+	});
+
+	/* ---------- Share your GWA as a picture ---------- */
+
+	function loadIcon() {
+		return new Promise(function (resolve) {
+			var img = new Image();
+			img.onload = function () { resolve(img); };
+			img.onerror = function () { resolve(null); };
+			img.src = "icons/icon-192.png";
+		});
+	}
+
+	function shareCard(logo) {
+		var out = compute(cur().rows);
+		var W = 1080, H = 1350, X = 96;
+		var c = el("canvas");
+		c.width = W;
+		c.height = H;
+		var ctx = c.getContext("2d");
+		var styles = window.getComputedStyle(els.root);
+		function v(name) { return styles.getPropertyValue(name).trim(); }
+		var dark = state.isDark;
+		var g = ctx.createLinearGradient(0, 0, W, H);
+		g.addColorStop(0, dark ? "#22305A" : "#FFFFFF");
+		g.addColorStop(1, dark ? "#131B31" : "#E3E9F8");
+		ctx.fillStyle = g;
+		ctx.fillRect(0, 0, W, H);
+		if (out.academic) {
+			var glow = ctx.createRadialGradient(W * 0.85, H * 0.2, 0, W * 0.85, H * 0.2, W * 0.75);
+			glow.addColorStop(0, dark ? "rgba(210,167,63,0.26)" : "rgba(2,52,202,0.12)");
+			glow.addColorStop(1, "rgba(0,0,0,0)");
+			ctx.fillStyle = glow;
+			ctx.fillRect(0, 0, W, H);
+		}
+		var text = v("--text"), muted = v("--muted"), accent = v("--accent"), accentText = v("--accent-text");
+		var field = v("--field"), zone = v("--scale-zone");
+		var font = "Outfit, system-ui, sans-serif";
+
+		// Brand
+		if (logo) {
+			ctx.save();
+			roundRect(ctx, X, 96, 88, 88, 22);
+			ctx.clip();
+			ctx.drawImage(logo, X, 96, 88, 88);
+			ctx.restore();
+		}
+		ctx.fillStyle = text;
+		ctx.font = "600 46px " + font;
+		ctx.fillText("GCalc", X + (logo ? 116 : 0), 152);
+
+		// GWA
+		ctx.fillStyle = muted;
+		ctx.font = "500 48px " + font;
+		ctx.fillText(state.terms.length > 1 ? cur().name : "My GWA", X, 400);
+		ctx.fillStyle = text;
+		ctx.font = "700 290px " + font;
+		ctx.fillText(out.counted ? formatGwa(out.result) : "0.00", X - 12, 660);
+
+		if (out.academic) {
+			ctx.font = "600 50px " + font;
+			var tw = ctx.measureText(out.academic).width;
+			ctx.fillStyle = dark ? "rgba(210,167,63,0.18)" : "rgba(2,52,202,0.10)";
+			roundRect(ctx, X, 712, tw + 84, 92, 46);
+			ctx.fill();
+			ctx.fillStyle = accentText;
+			ctx.fillText(out.academic, X + 42, 774);
+		}
+
+		// The 1.00 to 3.00 scale
+		var top = 900, left = X, width = W - 2 * X;
+		ctx.fillStyle = field;
+		roundRect(ctx, left, top, width, 18, 9);
+		ctx.fill();
+		ctx.fillStyle = zone;
+		roundRect(ctx, left, top, width / 2, 18, 9);
+		ctx.fill();
+		ctx.font = "500 32px " + font;
+		[[0, "1.00"], [0.25, "1.50"], [0.375, "1.75"], [0.5, "2.00"], [1, "3.00"]].forEach(function (t, i, all) {
+			var x = left + width * t[0];
+			ctx.fillStyle = muted;
+			var w = ctx.measureText(t[1]).width;
+			ctx.fillText(t[1], i === 0 ? x : i === all.length - 1 ? x - w : x - w / 2, top + 80);
+		});
+		if (out.counted) {
+			var pos = Math.max(0, Math.min(1, (out.result - 1) / 2));
+			ctx.fillStyle = dark ? "#1B2541" : "#FFFFFF";
+			ctx.beginPath();
+			ctx.arc(left + width * pos, top + 9, 30, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.fillStyle = accent;
+			ctx.beginPath();
+			ctx.arc(left + width * pos, top + 9, 22, 0, Math.PI * 2);
+			ctx.fill();
+		}
+
+		// Units and subjects
+		[["Units", String(out.totalUnits)], ["Subjects", String(out.counted)]].forEach(function (s, i) {
+			var x = X + i * 300;
+			ctx.fillStyle = muted;
+			ctx.font = "500 36px " + font;
+			ctx.fillText(s[0], x, 1080);
+			ctx.fillStyle = text;
+			ctx.font = "600 72px " + font;
+			ctx.fillText(s[1], x, 1160);
+		});
+		ctx.fillStyle = muted;
+		ctx.font = "400 32px " + font;
+		ctx.fillText("GWA Calculator for CLSU", X, H - 84);
+		return c;
+	}
+
+	function roundRect(ctx, x, y, w, h, r) {
+		ctx.beginPath();
+		ctx.moveTo(x + r, y);
+		ctx.arcTo(x + w, y, x + w, y + h, r);
+		ctx.arcTo(x + w, y + h, x, y + h, r);
+		ctx.arcTo(x, y + h, x, y, r);
+		ctx.arcTo(x, y, x + w, y, r);
+		ctx.closePath();
+	}
+
+	els.shareBtn.addEventListener("click", function () {
+		haptic();
+		var ready = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+		Promise.all([ready, loadIcon()]).then(function (got) {
+			var canvas = shareCard(got[1]);
+			var dataUrl = canvas.toDataURL("image/png");
+			if (window.GCalcAndroid && typeof window.GCalcAndroid.shareImage === "function") {
+				window.GCalcAndroid.shareImage(dataUrl.split(",")[1]);
+				return;
+			}
+			canvas.toBlob(function (blob) {
+				saveFile("my-gwa.png", "image/png", blob, null, function (ok) {
+					if (ok === false) showToast("Could not share the picture");
+				});
+			}, "image/png");
+		});
+	});
+
+	/* ---------- Sort subjects ---------- */
+
+	function openMenu(title, options) {
+		els.menuTitle.textContent = title;
+		els.menuList.textContent = "";
+		options.forEach(function (o) {
+			var li = el("li");
+			var b = el("button", "menu-item", o.label);
+			b.type = "button";
+			b.addEventListener("click", function () {
+				closeSheet(els.menu);
+				o.run();
+			});
+			li.appendChild(b);
+			els.menuList.appendChild(li);
+		});
+		openSheet(els.menu);
+	}
+
+	els.menuClose.addEventListener("click", function () { closeSheet(els.menu); });
+	closeOnBackdrop(els.menu);
+
+	function sortRows(label, compare) {
+		var term = cur();
+		var previous = term.rows.slice();
+		term.rows = term.rows.slice().sort(compare);
 		saveState();
+		render({ quiet: true, entering: true });
+		haptic();
+		showToast("Sorted by " + label, function () {
+			term.rows = previous;
+			saveState();
+			render({ quiet: true, entering: true });
+		});
+	}
+
+	function byName(a, b) {
+		return rowLabel(a).localeCompare(rowLabel(b), undefined, { numeric: true });
+	}
+
+	els.sortBtn.addEventListener("click", function () {
+		openMenu("Sort subjects", [
+			{ label: "Subject name", run: function () { sortRows("name", byName); } },
+			{ label: "Best grade first", run: function () {
+				sortRows("grade", function (a, b) { return (a.grades || 9) - (b.grades || 9) || byName(a, b); });
+			} },
+			{ label: "Most units first", run: function () {
+				sortRows("units", function (a, b) { return b.units - a.units || byName(a, b); });
+			} }
+		]);
 	});
 
 	// Show the compact GWA bar once the big card scrolls out of view.

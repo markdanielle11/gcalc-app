@@ -22,5 +22,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Lets the share sheet read the GWA picture (cache/share only, read-only). -->
+        <provider
+            android:name=".ShareProvider"
+            android:authorities="com.gcalc.gwa.share"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>
