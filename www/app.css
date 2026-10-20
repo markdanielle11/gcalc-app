@@ -1,8 +1,9 @@
 /* GCalc app styles.
    Brand carried over from the original web version: navy + gold (dark),
-   light blue + royal blue (light), Outfit type.
-   Shape rule: cards and sheet 20px, list groups 16px, controls 12px,
-   badges, toast and grade pills fully rounded. */
+   white + royal blue (light), Outfit type.
+   Shape rule: hero and sheets 24px, list groups 20px, controls 14px,
+   badges, toast, grade pills and the scale fully rounded.
+   Layers: minibar 4, bottom bar 3, toast 6 (dialogs sit in the top layer). */
 
 @font-face {
 	font-family: "Outfit";
@@ -12,54 +13,63 @@
 }
 
 :root {
-	--radius-card: 20px;
-	--radius-group: 16px;
-	--radius-control: 12px;
+	--radius-card: 24px;
+	--radius-group: 20px;
+	--radius-control: 14px;
 	--ease: cubic-bezier(0.16, 1, 0.3, 1);
+	--spring: cubic-bezier(0.34, 1.4, 0.64, 1);
 	--safe-top: env(safe-area-inset-top, 0px);
 	--safe-bottom: env(safe-area-inset-bottom, 0px);
-	--bottombar-h: 5.25rem;
+	--bottombar-h: 5.5rem;
 }
 
 .theme-dark {
-	--bg: #1E2B4D;
-	--surface: #1A1F32;
-	--surface-raised: #222A44;
-	--field: #2A3558;
-	--field-hover: #33406A;
-	--text: #DAE2F1;
-	--muted: #A3AEC7;
-	--line: rgba(218, 226, 241, 0.09);
-	--accent: #C39A32;
-	--accent-strong: #D4AB43;
-	--accent-soft: rgba(195, 154, 50, 0.16);
-	--accent-text: #E2BD5C;
-	--on-accent: #0E1625;
-	--danger-text: #FF8A80;
-	--danger-soft: rgba(255, 138, 128, 0.12);
-	--shadow: 0 12px 32px rgba(7, 10, 18, 0.5);
-	--backdrop: rgba(7, 10, 18, 0.6);
+	--bg: #131B31;
+	--surface: #1B2541;
+	--surface-raised: #222D4E;
+	--field: #29355A;
+	--field-hover: #324068;
+	--text: #E6EBF6;
+	--muted: #9DA8C3;
+	--line: rgba(230, 235, 246, 0.08);
+	--accent: #D2A73F;
+	--accent-strong: #E0B652;
+	--accent-soft: rgba(210, 167, 63, 0.15);
+	--accent-text: #E7C268;
+	--on-accent: #131B31;
+	--danger-text: #FF8F86;
+	--danger-soft: rgba(255, 143, 134, 0.13);
+	--scale-zone: #3A477A;
+	--hero-bg: linear-gradient(160deg, #22305A 0%, #1B2541 55%, #18213B 100%);
+	--hero-edge: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+	--shadow: 0 16px 40px rgba(5, 8, 18, 0.55);
+	--shadow-soft: 0 6px 18px rgba(5, 8, 18, 0.35);
+	--backdrop: rgba(5, 8, 18, 0.62);
 	color-scheme: dark;
 }
 
 .theme-light {
-	--bg: #D9E2FC;
-	--surface: #F3F6FD;
+	--bg: #EEF2FB;
+	--surface: #FFFFFF;
 	--surface-raised: #FFFFFF;
-	--field: #E3E9FB;
-	--field-hover: #D3DDF8;
-	--text: #0E1625;
-	--muted: #46536F;
-	--line: rgba(14, 22, 37, 0.08);
+	--field: #E8EDF9;
+	--field-hover: #DCE3F6;
+	--text: #101831;
+	--muted: #4D5874;
+	--line: rgba(16, 24, 49, 0.08);
 	--accent: #0234CA;
-	--accent-strong: #012389;
-	--accent-soft: rgba(2, 52, 202, 0.10);
+	--accent-strong: #012896;
+	--accent-soft: rgba(2, 52, 202, 0.08);
 	--accent-text: #0234CA;
-	--on-accent: #F3F6FD;
+	--on-accent: #FFFFFF;
 	--danger-text: #B3261E;
 	--danger-soft: rgba(179, 38, 30, 0.08);
-	--shadow: 0 12px 32px rgba(30, 43, 77, 0.18);
-	--backdrop: rgba(14, 22, 37, 0.45);
+	--scale-zone: #C9D5F6;
+	--hero-bg: linear-gradient(160deg, #FFFFFF 0%, #F7F9FE 100%);
+	--hero-edge: inset 0 0 0 1px rgba(16, 24, 49, 0.05);
+	--shadow: 0 16px 40px rgba(20, 34, 78, 0.16);
+	--shadow-soft: 0 4px 14px rgba(20, 34, 78, 0.08);
+	--backdrop: rgba(16, 24, 49, 0.42);
 	color-scheme: light;
 }
 
@@ -82,6 +92,7 @@ body {
 	color: var(--text);
 	overflow-x: hidden;
 	overscroll-behavior-y: none;
+	-webkit-font-smoothing: antialiased;
 }
 
 /* Keeps scrolled content from showing through the notch / status bar area. */
@@ -118,13 +129,18 @@ button {
 
 /* ---------- Layout ---------- */
 
+/* The GWA card and the actions; one column on phones, the left column on laptops. */
+.side {
+	display: contents;
+}
+
 .app {
 	width: 100%;
 	max-width: 32rem;
 	min-height: 100vh;
 	min-height: 100dvh;
 	margin: 0 auto;
-	padding: 0 1rem calc(var(--safe-bottom) + var(--bottombar-h) + 1rem);
+	padding: 0 1rem calc(var(--safe-bottom) + var(--bottombar-h) + 1.25rem);
 	display: flex;
 	flex-direction: column;
 }
@@ -137,11 +153,27 @@ button {
 	padding: calc(var(--safe-top) + 0.75rem) 0 1rem;
 }
 
+.brand {
+	display: flex;
+	align-items: center;
+	gap: 0.625rem;
+	min-width: 0;
+}
+
+.brand-mark {
+	width: 2rem;
+	height: 2rem;
+	border-radius: 9px;
+	flex: none;
+	box-shadow: var(--shadow-soft);
+}
+
 .title {
-	font-size: 1.375rem;
+	font-size: 1.25rem;
 	line-height: 1.75rem;
 	font-weight: 600;
-	letter-spacing: -0.01em;
+	letter-spacing: -0.015em;
+	white-space: nowrap;
 }
 
 /* ---------- Buttons ---------- */
@@ -176,13 +208,14 @@ button {
 	align-items: center;
 	gap: 0.375rem;
 	min-height: 2.75rem;
-	padding: 0 0.5rem;
-	margin-right: -0.5rem;
+	padding: 0 0.625rem;
+	margin-right: -0.625rem;
 	border: 0;
-	border-radius: var(--radius-control);
+	border-radius: 999px;
 	background: transparent;
 	color: var(--muted);
 	font-size: 0.9375rem;
+	font-weight: 500;
 	cursor: pointer;
 }
 
@@ -200,18 +233,15 @@ button {
 	align-items: center;
 	justify-content: center;
 	gap: 0.5rem;
-	min-height: 3.25rem;
+	min-height: 3.375rem;
 	padding: 0 1.25rem;
 	border: 0;
 	border-radius: var(--radius-control);
 	font-size: 1.0625rem;
 	font-weight: 600;
+	letter-spacing: -0.005em;
 	white-space: nowrap;
 	cursor: pointer;
-}
-
-.btn-block {
-	width: 100%;
 }
 
 .btn-primary {
@@ -232,9 +262,20 @@ button {
 /* ---------- Hero (GWA) ---------- */
 
 .hero {
-	padding: 1.25rem 1.25rem 1rem;
+	position: relative;
+	padding: 1.25rem 1.25rem 1.125rem;
 	border-radius: var(--radius-card);
-	background: var(--surface);
+	background: var(--hero-bg);
+	box-shadow: var(--hero-edge), var(--shadow-soft);
+	overflow: hidden;
+}
+
+.hero-top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75rem;
+	min-height: 2rem;
 }
 
 .hero-label {
@@ -243,59 +284,148 @@ button {
 	color: var(--muted);
 }
 
-.hero-row {
-	display: flex;
-	flex-direction: column;
-	align-items: flex-start;
-	gap: 0.5rem;
-	margin-top: 0.25rem;
-}
-
 .gwa {
-	font-size: 3.75rem;
-	line-height: 1.1;
+	margin-top: 0.125rem;
+	font-size: 4.25rem;
+	line-height: 1.05;
 	font-weight: 700;
-	letter-spacing: -0.03em;
+	letter-spacing: -0.04em;
 	font-variant-numeric: tabular-nums;
 }
 
 .gwa.is-empty {
 	color: var(--muted);
-	opacity: 0.55;
+	opacity: 0.45;
 }
 
 .standing {
-	padding: 0.375rem 0.875rem;
+	display: inline-flex;
+	align-items: center;
+	gap: 0.375rem;
+	padding: 0.3125rem 0.75rem 0.3125rem 0.5625rem;
 	border-radius: 999px;
 	background: var(--accent-soft);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 	color: var(--accent-text);
-	font-size: 0.9375rem;
+	font-size: 0.875rem;
 	line-height: 1.25rem;
 	font-weight: 600;
 	white-space: nowrap;
 }
 
-.stats {
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: 0.5rem;
+.standing[hidden] {
+	display: none;
+}
+
+.standing .icon {
+	width: 1rem;
+	height: 1rem;
+}
+
+/* Where the GWA sits between 1.00 and 3.00, with the honors cutoffs marked. */
+.scale {
 	margin-top: 1rem;
 }
 
-.stat {
-	padding: 0.625rem 0.875rem;
-	border-radius: var(--radius-control);
+.scale-track {
+	position: relative;
+	height: 0.5rem;
+	border-radius: 999px;
 	background: var(--field);
 }
 
+.scale-zone {
+	position: absolute;
+	inset: 0 50% 0 0;
+	border-radius: 999px 0 0 999px;
+	background: var(--scale-zone);
+}
+
+.scale-tick {
+	position: absolute;
+	top: -0.125rem;
+	bottom: -0.125rem;
+	left: calc(var(--at) * 100%);
+	width: 2px;
+	margin-left: -1px;
+	border-radius: 1px;
+	background: var(--line);
+	background: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+
+/* Full-width layer moved with transform only; the dot sits on its left edge. */
+.scale-rail {
+	position: absolute;
+	inset: 0;
+	transform: translateX(0);
+	pointer-events: none;
+}
+
+.scale-marker {
+	position: absolute;
+	top: 50%;
+	left: 0;
+	width: 1.125rem;
+	height: 1.125rem;
+	margin: -0.5625rem 0 0 -0.5625rem;
+	border-radius: 999px;
+	background: var(--accent);
+	box-shadow: 0 0 0 3px var(--surface), var(--shadow-soft);
+	opacity: 0;
+	transform: scale(0.4);
+}
+
+.hero.has-gwa .scale-marker {
+	opacity: 1;
+	transform: none;
+}
+
+.scale-labels {
+	position: relative;
+	height: 1rem;
+	margin-top: 0.5rem;
+	font-size: 0.6875rem;
+	line-height: 1rem;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.scale-labels span {
+	position: absolute;
+	left: calc(var(--at) * 100%);
+	transform: translateX(-50%);
+}
+
+.scale-labels span:first-child {
+	transform: none;
+}
+
+.scale-labels span:last-child {
+	transform: translateX(-100%);
+}
+
+.stats {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	margin-top: 1rem;
+	padding-top: 0.875rem;
+	border-top: 1px solid var(--line);
+}
+
+.stat + .stat {
+	padding-left: 1rem;
+	border-left: 1px solid var(--line);
+}
+
 .stat dt {
-	font-size: 0.75rem;
+	font-size: 0.8125rem;
 	line-height: 1rem;
 	color: var(--muted);
 }
 
 .stat dd {
-	font-size: 1.25rem;
+	margin-top: 0.125rem;
+	font-size: 1.375rem;
 	line-height: 1.75rem;
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
@@ -313,13 +443,23 @@ button {
 	align-items: center;
 	justify-content: space-between;
 	min-height: 2.75rem;
-	margin-bottom: 0.25rem;
+	margin-bottom: 0.375rem;
 }
 
 .subjects-title {
-	font-size: 1.0625rem;
+	display: flex;
+	align-items: baseline;
+	gap: 0.5rem;
+	font-size: 1.125rem;
 	line-height: 1.5rem;
 	font-weight: 600;
+}
+
+.count {
+	font-size: 0.9375rem;
+	font-weight: 500;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
 }
 
 .subject-list {
@@ -327,6 +467,7 @@ button {
 	padding: 0;
 	border-radius: var(--radius-group);
 	background: var(--surface);
+	box-shadow: var(--hero-edge);
 	overflow: hidden;
 }
 
@@ -362,7 +503,7 @@ button {
 	min-width: 0;
 	display: flex;
 	flex-direction: column;
-	gap: 0.125rem;
+	gap: 0.0625rem;
 }
 
 .subject-name {
@@ -372,6 +513,7 @@ button {
 	font-size: 1.0625rem;
 	line-height: 1.5rem;
 	font-weight: 600;
+	letter-spacing: -0.005em;
 }
 
 .subject-name.is-placeholder {
@@ -392,11 +534,21 @@ button {
 	padding: 0.375rem 0.75rem;
 	border-radius: 999px;
 	background: var(--field);
-	font-size: 1.1875rem;
+	font-size: 1.125rem;
 	line-height: 1.5rem;
 	font-weight: 700;
 	text-align: center;
 	font-variant-numeric: tabular-nums;
+}
+
+/* Grade tiers: honors-level grades in the accent, failing in red. */
+.grade-pill.is-top {
+	color: var(--accent-text);
+}
+
+.grade-pill.is-fail {
+	background: var(--danger-soft);
+	color: var(--danger-text);
 }
 
 .grade-pill.is-empty {
@@ -411,23 +563,60 @@ button {
 	width: 1rem;
 	height: 1rem;
 	color: var(--muted);
-	opacity: 0.7;
+	opacity: 0.6;
 }
 
 .empty {
-	padding: 2.5rem 1rem;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.375rem;
+	padding: 2.25rem 1.5rem 2.5rem;
 	border-radius: var(--radius-group);
-	border: 1.5px dashed var(--line);
-	color: var(--muted);
+	background: var(--surface);
+	box-shadow: var(--hero-edge);
 	text-align: center;
-	font-size: 0.9375rem;
 }
 
 .empty[hidden] {
 	display: none;
 }
 
-/* ---------- Bottom bar (Add subject stays in thumb reach) ---------- */
+.empty-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 3.5rem;
+	height: 3.5rem;
+	margin-bottom: 0.5rem;
+	border-radius: 999px;
+	background: var(--accent-soft);
+	color: var(--accent-text);
+}
+
+.empty-icon .icon {
+	width: 1.75rem;
+	height: 1.75rem;
+}
+
+.empty-icon.is-warning {
+	background: var(--danger-soft);
+	color: var(--danger-text);
+}
+
+.empty-title {
+	font-size: 1.0625rem;
+	font-weight: 600;
+}
+
+.empty-text {
+	max-width: 17rem;
+	font-size: 0.9375rem;
+	line-height: 1.35rem;
+	color: var(--muted);
+}
+
+/* ---------- Bottom bar (actions stay in thumb reach) ---------- */
 
 .bottombar {
 	position: fixed;
@@ -435,8 +624,8 @@ button {
 	right: 0;
 	bottom: 0;
 	z-index: 3;
-	padding: 1.25rem 1rem calc(var(--safe-bottom) + 1rem);
-	background: linear-gradient(to top, var(--bg) 62%, transparent);
+	padding: 1.5rem 1rem calc(var(--safe-bottom) + 1rem);
+	background: linear-gradient(to top, var(--bg) 58%, transparent);
 	pointer-events: none;
 }
 
@@ -514,7 +703,7 @@ button {
 	display: none;
 }
 
-/* ---------- Editor sheet ---------- */
+/* ---------- Sheets ---------- */
 
 .sheet {
 	position: fixed;
@@ -544,10 +733,10 @@ button {
 
 .grabber {
 	width: 2.5rem;
-	height: 0.25rem;
+	height: 0.3125rem;
 	margin: 0.5rem auto 0;
 	border-radius: 999px;
-	background: var(--line);
+	background: var(--field-hover);
 	flex: none;
 }
 
@@ -555,7 +744,7 @@ button {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 0.25rem 1rem 0 1.25rem;
+	padding: 0.375rem 1rem 0 1.25rem;
 	flex: none;
 }
 
@@ -564,16 +753,17 @@ button {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 1.1875rem;
-	line-height: 1.5rem;
+	font-size: 1.25rem;
+	line-height: 1.75rem;
 	font-weight: 600;
+	letter-spacing: -0.01em;
 }
 
 .sheet-body {
 	display: flex;
 	flex-direction: column;
-	gap: 1.125rem;
-	padding: 0.5rem 1.25rem 1rem;
+	gap: 1.25rem;
+	padding: 0.625rem 1.25rem 1.125rem;
 	overflow-y: auto;
 	overscroll-behavior: contain;
 }
@@ -593,19 +783,21 @@ button {
 
 .text-input {
 	width: 100%;
-	height: 3rem;
+	height: 3.25rem;
 	padding: 0 1rem;
 	border: 0;
 	border-radius: var(--radius-control);
 	background: var(--field);
 	color: var(--text);
 	font: inherit;
-	font-size: 1rem; /* 16px keeps iOS from zooming in */
+	font-size: 1.0625rem; /* over 16px keeps iOS from zooming in */
+	font-weight: 500;
 }
 
 .text-input::placeholder {
 	color: var(--muted);
-	opacity: 0.8;
+	font-weight: 400;
+	opacity: 0.85;
 }
 
 .text-input:focus {
@@ -638,9 +830,14 @@ button {
 	cursor: pointer;
 }
 
+.choice.is-fail:not([aria-checked="true"]) {
+	color: var(--danger-text);
+}
+
 .choice[aria-checked="true"] {
 	background: var(--accent);
 	color: var(--on-accent);
+	box-shadow: var(--shadow-soft);
 }
 
 .sheet-actions {
@@ -657,25 +854,25 @@ button {
 .import-progress {
 	display: flex;
 	flex-direction: column;
-	gap: 0.875rem;
+	gap: 0.75rem;
 	padding-bottom: 0.25rem;
 }
 
 .import-preview-wrap {
 	position: relative;
 	overflow: hidden;
-	max-height: 14rem;
-	border-radius: var(--radius-control);
+	max-height: 15rem;
+	border-radius: var(--radius-group);
 	background: var(--field);
 }
 
 .import-preview {
 	display: block;
 	width: 100%;
-	max-height: 14rem;
+	max-height: 15rem;
 	object-fit: cover;
 	object-position: top;
-	opacity: 0.85;
+	opacity: 0.8;
 }
 
 .import-preview:not([src]),
@@ -689,9 +886,28 @@ button {
 	position: absolute;
 	inset: 0;
 	border-top: 2px solid var(--accent);
-	background: linear-gradient(var(--accent-soft), transparent 2.5rem);
+	background: linear-gradient(var(--accent-soft), transparent 3rem);
 	opacity: 0;
 	pointer-events: none;
+}
+
+.import-status {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 1rem;
+	margin-top: 0.25rem;
+}
+
+.import-step {
+	font-size: 0.9375rem;
+	font-weight: 500;
+}
+
+.import-pct {
+	font-size: 0.875rem;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
 }
 
 .progress {
@@ -708,11 +924,6 @@ button {
 	background: var(--accent);
 	transform-origin: left center;
 	transform: scaleX(0);
-}
-
-.import-step {
-	font-size: 0.9375rem;
-	color: var(--muted);
 }
 
 .import-list {
@@ -744,7 +955,7 @@ button {
 	align-items: center;
 	gap: 0.875rem;
 	width: 100%;
-	min-height: 3.75rem;
+	min-height: 3.875rem;
 	padding: 0.5rem 1rem;
 	border: 0;
 	background: transparent;
@@ -780,8 +991,17 @@ button {
 	opacity: 0.45;
 }
 
-.import-item .grade-pill {
+.import-item .grade-pill:not(.is-fail) {
 	background: var(--surface);
+}
+
+/* While reading, the only action is Cancel. */
+.sheet.is-busy #import-primary {
+	display: none;
+}
+
+.sheet.is-busy .sheet-actions {
+	grid-template-columns: 1fr;
 }
 
 .import-item .grade-pill.is-empty {
@@ -794,10 +1014,19 @@ button {
 }
 
 .import-message {
-	padding: 1.5rem 0.5rem;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 1.25rem 0.5rem 1rem;
 	text-align: center;
 	font-size: 1rem;
+	line-height: 1.4rem;
 	color: var(--muted);
+}
+
+.import-message p {
+	max-width: 20rem;
 }
 
 /* ---------- Toast ---------- */
@@ -806,23 +1035,29 @@ button {
 	position: fixed;
 	left: 50%;
 	bottom: calc(var(--safe-bottom) + var(--bottombar-h) + 0.25rem);
-	z-index: 4;
+	z-index: 6;
 	display: flex;
 	align-items: center;
-	gap: 1rem;
+	gap: 0.625rem;
 	width: max-content;
 	max-width: calc(100% - 2rem);
-	padding: 0.375rem 0.375rem 0.375rem 1.25rem;
+	padding: 0.375rem 0.375rem 0.375rem 1rem;
 	border-radius: 999px;
 	background: var(--text);
 	color: var(--bg);
 	box-shadow: var(--shadow);
 	transform: translateX(-50%);
 	font-size: 0.9375rem;
+	font-weight: 500;
 }
 
 .toast[hidden] {
 	display: none;
+}
+
+.toast-icon {
+	width: 1.125rem;
+	height: 1.125rem;
 }
 
 .toast-text {
@@ -834,10 +1069,11 @@ button {
 .toast-btn {
 	flex: none;
 	min-height: 2.5rem;
+	margin-left: 0.375rem;
 	padding: 0 1rem;
 	border: 0;
 	border-radius: 999px;
-	background: transparent;
+	background: color-mix(in srgb, var(--bg) 14%, transparent);
 	color: inherit;
 	font-weight: 700;
 	cursor: pointer;
@@ -850,21 +1086,20 @@ button {
 .btn:focus-visible,
 .subject-btn:focus-visible,
 .choice:focus-visible,
+.import-item:focus-visible,
 .toast-btn:focus-visible {
 	outline: 2px solid var(--accent);
 	outline-offset: 2px;
 }
 
-.subject-btn:focus-visible {
+.subject-btn:focus-visible,
+.import-item:focus-visible {
 	outline-offset: -2px;
 }
 
 @media (hover: hover) {
 	.icon-btn:hover,
-	.text-btn:hover {
-		background: var(--accent-soft);
-	}
-
+	.text-btn:hover,
 	.subject-btn:hover {
 		background: var(--accent-soft);
 	}
@@ -898,15 +1133,26 @@ button {
 	html,
 	body,
 	.hero,
-	.stat,
 	.subject-list,
 	.btn,
 	.choice,
-	.grade-pill {
+	.grade-pill,
+	.icon-btn,
+	.text-btn,
+	.subject-btn {
 		transition:
-			background-color 0.3s var(--ease),
-			color 0.3s var(--ease),
-			transform 0.12s var(--ease);
+			background-color 0.25s var(--ease),
+			color 0.25s var(--ease),
+			box-shadow 0.25s var(--ease),
+			transform 0.14s var(--ease);
+	}
+
+	.scale-rail {
+		transition: transform 0.7s var(--ease);
+	}
+
+	.scale-marker {
+		transition: opacity 0.3s var(--ease), transform 0.45s var(--spring);
 	}
 
 	.minibar {
@@ -922,23 +1168,31 @@ button {
 	}
 
 	.subject.is-new {
-		animation: rise 0.4s var(--ease);
+		animation: rise 0.45s var(--ease);
+	}
+
+	.choice[aria-checked="true"] {
+		animation: pop 0.28s var(--spring);
+	}
+
+	.standing:not([hidden]) {
+		animation: pop 0.4s var(--spring);
 	}
 
 	.sheet[open] {
-		animation: sheet-up 0.32s var(--ease);
+		animation: sheet-up 0.36s var(--ease);
 	}
 
 	.sheet[open]::backdrop {
-		animation: fade 0.32s var(--ease);
+		animation: fade 0.36s var(--ease);
 	}
 
 	.toast:not([hidden]) {
-		animation: toast-in 0.3s var(--ease);
+		animation: toast-in 0.32s var(--ease);
 	}
 
 	.progress-fill {
-		transition: transform 0.3s var(--ease);
+		transition: transform 0.35s var(--ease);
 	}
 
 	.is-working .scanline {
@@ -946,23 +1200,34 @@ button {
 		animation: scan 1.6s ease-in-out infinite alternate;
 	}
 
+	.import-row {
+		animation: rise 0.4s var(--ease) backwards;
+		animation-delay: calc(var(--i, 0) * 40ms);
+	}
+
 	@keyframes scan {
 		from { transform: translateY(0); }
 		to { transform: translateY(calc(100% - 2px)); }
 	}
 
-	.gwa.bump {
-		animation: bump 0.3s var(--ease);
+	@keyframes rise {
+		from { opacity: 0; transform: translateY(8px); }
+		to { opacity: 1; transform: none; }
 	}
 
-	@keyframes rise {
-		from { opacity: 0; transform: translateY(6px); }
-		to { opacity: 1; transform: none; }
+	@keyframes pop {
+		from { transform: scale(0.9); }
+		to { transform: none; }
 	}
 
 	@keyframes sheet-up {
 		from { transform: translateY(100%); }
 		to { transform: none; }
+	}
+
+	@keyframes sheet-in {
+		from { opacity: 0; transform: translateY(16px) scale(0.98); }
+		to { opacity: 1; transform: none; }
 	}
 
 	@keyframes fade {
@@ -971,13 +1236,8 @@ button {
 	}
 
 	@keyframes toast-in {
-		from { opacity: 0; transform: translate(-50%, 8px); }
+		from { opacity: 0; transform: translate(-50%, 10px); }
 		to { opacity: 1; transform: translate(-50%, 0); }
-	}
-
-	@keyframes bump {
-		from { transform: translateY(4px); opacity: 0.5; }
-		to { transform: none; opacity: 1; }
 	}
 }
 
@@ -1005,7 +1265,7 @@ button {
 	}
 
 	.text-input {
-		height: 2.5rem;
+		height: 2.75rem;
 	}
 
 	.sheet-actions {
@@ -1020,10 +1280,108 @@ button {
 
 @media (max-width: 359px) {
 	.gwa {
-		font-size: 3rem;
+		font-size: 3.25rem;
+	}
+
+	.title {
+		font-size: 1.125rem;
 	}
 
 	.sheet-actions {
 		grid-template-columns: 1fr;
+	}
+}
+
+/* ---------- Tablets and laptops ---------- */
+
+@media (min-width: 640px) {
+	/* Sheets become centered dialogs. */
+	.sheet {
+		inset: 0;
+		max-width: 30rem;
+		max-height: min(46rem, calc(100dvh - 3rem));
+		margin: auto;
+		border-radius: var(--radius-card);
+	}
+
+	.grabber {
+		display: none;
+	}
+
+	.sheet-head {
+		padding-top: 0.875rem;
+	}
+
+	.sheet-actions {
+		padding-bottom: 1.125rem;
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.sheet[open] {
+			animation: sheet-in 0.3s var(--ease);
+		}
+	}
+}
+
+@media (min-width: 960px) {
+	/* Two columns: the GWA stays in view on the left, subjects on the right. */
+	.app {
+		display: grid;
+		grid-template-columns: 22rem minmax(0, 1fr);
+		grid-template-rows: auto 1fr;
+		column-gap: 2rem;
+		max-width: 60rem;
+		padding: 0 2rem 3rem;
+	}
+
+	.topbar {
+		grid-column: 1 / -1;
+		padding-top: 1.5rem;
+		padding-bottom: 1.25rem;
+	}
+
+	.side {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		position: sticky;
+		top: 1.5rem;
+		align-self: start;
+	}
+
+	.hero {
+		padding: 1.5rem;
+	}
+
+	.gwa {
+		font-size: 4.75rem;
+	}
+
+	.subjects {
+		padding-top: 0;
+		padding-bottom: 2rem;
+	}
+
+	.subjects-head {
+		margin-top: -0.25rem;
+	}
+
+	/* The actions sit under the GWA card in the left column. */
+	.bottombar {
+		position: static;
+		padding: 0;
+		background: none;
+	}
+
+	.bottombar .btn {
+		box-shadow: var(--shadow-soft);
+	}
+
+	.minibar {
+		display: none;
+	}
+
+	.toast {
+		bottom: 1.5rem;
 	}
 }

@@ -21,6 +21,9 @@
 		hero: $("hero"),
 		gwa: $("gwa"),
 		standing: $("standing"),
+		standingText: $("standing-text"),
+		scaleRail: $("scale-rail"),
+		subjectCount: $("subject-count"),
 		statUnits: $("stat-units"),
 		statSubjects: $("stat-subjects"),
 		list: $("list"),
@@ -54,6 +57,8 @@
 		importStep: $("import-step"),
 		importList: $("import-list"),
 		importMessage: $("import-message"),
+		importMessageText: $("import-message-text"),
+		importPct: $("import-pct"),
 		importPrimary: $("import-primary"),
 		importSecondary: $("import-secondary"),
 		toast: $("toast"),
@@ -66,6 +71,8 @@
 	var toastTimer = null;
 	var undoAction = null;
 	var lastGwaText = null;
+	var shownGwa = 0;   // the number on screen while it counts to a new GWA
+	var gwaFrame = 0;
 	var heroVisible = true;
 
 	/* ---------- State ---------- */
@@ -166,6 +173,21 @@
 		return decimals.length < 2 ? n.toFixed(2) : s;
 	}
 
+	// Honors-level grades get the accent, failing grades red.
+	function gradeTier(g) {
+		if (g > 0 && g <= 1.75) return " is-top";
+		if (g >= 5) return " is-fail";
+		return "";
+	}
+
+	function reducedMotion() {
+		try {
+			return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		} catch (e) {
+			return false;
+		}
+	}
+
 	function plural(n, word) {
 		return n + " " + word + (n === 1 ? "" : "s");
 	}
@@ -225,7 +247,7 @@
 		text.appendChild(el("span", "subject-units", plural(row.units, "unit")));
 		btn.appendChild(text);
 
-		btn.appendChild(el("span", "grade-pill" + (row.grades === 0 ? " is-empty" : ""),
+		btn.appendChild(el("span", "grade-pill" + (row.grades === 0 ? " is-empty" : gradeTier(row.grades)),
 			row.grades === 0 ? "Set grade" : row.grades.toFixed(2)));
 		btn.appendChild(icon("caret-right", "chevron"));
 
@@ -244,22 +266,24 @@
 		});
 		els.empty.hidden = state.rows.length > 0;
 		els.clear.disabled = state.rows.length === 0;
+		els.subjectCount.textContent = state.rows.length ? String(state.rows.length) : "";
 	}
 
 	function renderSummary() {
 		var out = compute(state.rows);
 		var text = out.counted === 0 ? "0.00" : formatGwa(out.result);
 
-		els.gwa.textContent = text;
-		els.gwa.classList.toggle("is-empty", out.counted === 0);
-		if (lastGwaText !== null && text !== lastGwaText) {
-			els.gwa.classList.remove("bump");
-			void els.gwa.offsetWidth; // restart the animation
-			els.gwa.classList.add("bump");
-		}
+		var empty = out.counted === 0;
+		if (text !== lastGwaText) showGwa(empty ? 0 : out.result, text, lastGwaText === null);
+		els.gwa.classList.toggle("is-empty", empty);
 		lastGwaText = text;
 
-		els.standing.textContent = out.academic;
+		// Marker on the 1.00 to 3.00 scale (past 3.00 it rests at the end).
+		var pos = empty ? 0 : Math.max(0, Math.min(1, (out.result - 1) / 2));
+		els.scaleRail.style.transform = "translateX(" + (pos * 100).toFixed(2) + "%)";
+		els.hero.classList.toggle("has-gwa", !empty);
+
+		els.standingText.textContent = out.academic;
 		els.standing.hidden = out.academic === "";
 
 		els.statUnits.textContent = String(out.totalUnits);
@@ -269,6 +293,27 @@
 		els.miniStanding.textContent = out.academic;
 		els.miniStanding.hidden = out.academic === "";
 		updateMinibar();
+	}
+
+	// Counts the GWA up or down to its new value, so a change is easy to follow.
+	function showGwa(value, text, instant) {
+		window.cancelAnimationFrame(gwaFrame);
+		var from = shownGwa;
+		shownGwa = value;
+		var decimals = (text.split(".")[1] || "").length;
+		if (instant || reducedMotion() || !window.requestAnimationFrame || value === 0) {
+			els.gwa.textContent = text;
+			return;
+		}
+		var start = null;
+		function step(now) {
+			if (start === null) start = now;
+			var k = Math.min(1, (now - start) / 480);
+			var eased = 1 - Math.pow(1 - k, 3);
+			els.gwa.textContent = k < 1 ? (from + (value - from) * eased).toFixed(decimals) : text;
+			if (k < 1) gwaFrame = window.requestAnimationFrame(step);
+		}
+		gwaFrame = window.requestAnimationFrame(step);
 	}
 
 	function render() {
@@ -286,7 +331,7 @@
 		els.root.classList.toggle("theme-dark", dark);
 		els.root.classList.toggle("theme-light", !dark);
 		els.themeBtn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
-		var bg = dark ? "#1E2B4D" : "#D9E2FC";
+		var bg = dark ? "#131B31" : "#EEF2FB";
 		if (els.themeColor) els.themeColor.setAttribute("content", bg);
 		// Lets the Android app color its status and navigation bars to match.
 		if (window.GCalcAndroid && typeof window.GCalcAndroid.setTheme === "function") {
@@ -303,7 +348,7 @@
 	function buildChoices(container, values, current, format, onPick) {
 		container.textContent = "";
 		values.forEach(function (v) {
-			var b = el("button", "choice", format(v));
+			var b = el("button", "choice" + (v === 5 && values.length === GRADES.length ? " is-fail" : ""), format(v));
 			b.type = "button";
 			b.setAttribute("role", "radio");
 			b.setAttribute("aria-checked", String(v === current));
@@ -520,6 +565,7 @@
 		els.importList.hidden = view !== "review";
 		els.importMessage.hidden = view !== "message";
 		els.importProgress.classList.toggle("is-working", view === "working");
+		els.importer.classList.toggle("is-busy", view === "working");
 	}
 
 	function setProgress(fraction, label) {
@@ -527,6 +573,7 @@
 		els.importFill.style.transform = "scaleX(" + pct / 100 + ")";
 		els.importBar.setAttribute("aria-valuenow", String(pct));
 		if (label) els.importStep.textContent = label;
+		els.importPct.textContent = pct + "%";
 	}
 
 	function pickedCount() {
@@ -543,6 +590,7 @@
 		els.importList.textContent = "";
 		importFound.forEach(function (row, i) {
 			var li = el("li", "import-row");
+			li.style.setProperty("--i", String(i));
 			var item = el("button", "import-item");
 			item.type = "button";
 			item.setAttribute("role", "checkbox");
@@ -557,7 +605,7 @@
 			text.appendChild(el("span", "subject-units", plural(row.units, "unit")));
 			item.appendChild(text);
 
-			item.appendChild(el("span", "grade-pill" + (row.grades ? "" : " is-empty"),
+			item.appendChild(el("span", "grade-pill" + (row.grades ? gradeTier(row.grades) : " is-empty"),
 				row.grades ? row.grades.toFixed(2) : "No grade yet"));
 
 			item.addEventListener("click", function () {
@@ -574,7 +622,7 @@
 
 	function showImportMessage(title, message) {
 		els.importTitle.textContent = title;
-		els.importMessage.textContent = message;
+		els.importMessageText.textContent = message;
 		setImportView("message");
 		els.importSecondary.textContent = "Close";
 		els.importPrimary.disabled = false;
@@ -589,6 +637,7 @@
 		if (previewUrl) URL.revokeObjectURL(previewUrl);
 		previewUrl = URL.createObjectURL(file);
 		els.importPreview.src = previewUrl;
+		els.importPreview.alt = "Your screenshot";
 		els.importTitle.textContent = "Reading screenshot";
 		els.importSecondary.textContent = "Cancel";
 		els.importPrimary.textContent = "Add subjects";

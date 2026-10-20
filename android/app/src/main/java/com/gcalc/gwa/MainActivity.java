@@ -61,8 +61,8 @@ public class MainActivity extends Activity {
     private static final String SELFTEST_URL = "https://" + ASSET_HOST + "/selftest.html";
     private static final String PREFS = "gcalc";
     private static final String PREF_DARK = "dark";
-    private static final int DARK_BG = Color.parseColor("#1E2B4D");
-    private static final int LIGHT_BG = Color.parseColor("#D9E2FC");
+    private static final int DARK_BG = Color.parseColor("#131B31");
+    private static final int LIGHT_BG = Color.parseColor("#EEF2FB");
     private static final int REQUEST_FILE = 41;
 
     private FrameLayout root;
