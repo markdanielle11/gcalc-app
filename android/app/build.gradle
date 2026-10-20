@@ -19,9 +19,9 @@ android {
         versionCode Integer.parseInt(System.getenv('GCALC_VERSION_CODE') ?: '1')
         versionName System.getenv('GCALC_VERSION_NAME') ?: '1.0'
 
-        // Phones (arm) and the CI emulator (x86_64); keeps the APK smaller.
+        // Phones only (64- and 32-bit ARM); keeps the APK smaller.
         ndk {
-            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
         }
     }
 
@@ -37,6 +37,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // The CI emulator is x86_64.
+            ndk {
+                abiFilters 'x86_64'
+            }
+        }
         release {
             minifyEnabled false
             signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug

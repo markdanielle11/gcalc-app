@@ -6,3 +6,4 @@
 - **Calculator icon** artwork from the original project (`public/calculator.svg`, sourced from SVG Repo).
 - **Tesseract.js** and **tesseract.js-core** (offline text recognition for Import), Apache License 2.0, https://github.com/naptha/tesseract.js
 - **tessdata_fast** English model (`eng.traineddata`), Apache License 2.0, https://github.com/tesseract-ocr/tessdata_fast
+- **Google ML Kit Text Recognition** (Android, on-device), used under the ML Kit terms: https://developers.google.com/ml-kit/terms
