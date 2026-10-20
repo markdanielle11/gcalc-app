@@ -47,7 +47,7 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME"
           ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools"
 
-      - name: Build APK
+      - name: Build APKs
         working-directory: android
         env:
           GCALC_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -55,20 +55,71 @@ jobs:
           GCALC_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           GCALC_VERSION_CODE: ${{ github.run_number }}
           GCALC_VERSION_NAME: 1.0.${{ github.run_number }}
-        run: ./gradlew --no-daemon assembleRelease
+        run: ./gradlew --no-daemon assembleRelease assembleDebug
 
-      - name: Rename APK
-        run: cp android/app/build/outputs/apk/release/app-release.apk GCalc.apk
+      - name: Collect APKs
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk GCalc.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk GCalc-debug.apk
+          ls -la GCalc*.apk
 
       - uses: actions/upload-artifact@v7
         with:
           name: GCalc-apk
           path: GCalc.apk
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: GCalc-debug-apk
+          path: GCalc-debug.apk
+
+  android-test:
+    name: Android OCR test (emulator)
+    needs: android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: GCalc-debug-apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run self-test in emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash android/selftest.sh GCalc-debug.apk
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-screen
+          path: android-screen.png
+          if-no-files-found: ignore
+
+  release:
+    name: Publish APK
+    needs: [android, android-test]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: GCalc-apk
+
       # Publishes the APK on the repo's Releases page so it can be downloaded straight from a phone.
-      - name: Publish release
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: GCalc 1.0.${{ github.run_number }}

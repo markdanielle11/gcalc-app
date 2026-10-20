@@ -42,6 +42,20 @@
 		editorPrimaryText: $("editor-primary-text"),
 		editorPrimaryIcon: $("editor-primary-icon"),
 		editorSecondary: $("editor-secondary"),
+		importBtn: $("import-btn"),
+		importInput: $("import-input"),
+		importer: $("importer"),
+		importTitle: $("import-title"),
+		importClose: $("import-close"),
+		importProgress: $("import-progress"),
+		importPreview: $("import-preview"),
+		importBar: $("import-bar"),
+		importFill: $("import-fill"),
+		importStep: $("import-step"),
+		importList: $("import-list"),
+		importMessage: $("import-message"),
+		importPrimary: $("import-primary"),
+		importSecondary: $("import-secondary"),
 		toast: $("toast"),
 		toastText: $("toast-text"),
 		toastUndo: $("toast-undo")
@@ -479,6 +493,212 @@
 		if (fn) fn();
 	});
 
+	/* ---------- Import from screenshot ---------- */
+
+	var importRun = 0;       // ignores results from a cancelled read
+	var importFound = [];    // rows read from the image
+	var importPicked = [];   // true/false per row
+	var previewUrl = null;
+
+	function normName(name) {
+		return name.toUpperCase().replace(/[^A-Z0-9]/g, "");
+	}
+
+	function openSheet(dialog) {
+		if (dialog.open) return;
+		if (typeof dialog.showModal === "function") dialog.showModal();
+		else dialog.setAttribute("open", "");
+	}
+
+	function closeSheet(dialog) {
+		if (typeof dialog.close === "function") dialog.close();
+		else dialog.removeAttribute("open");
+	}
+
+	function setImportView(view) {
+		els.importProgress.hidden = view !== "working";
+		els.importList.hidden = view !== "review";
+		els.importMessage.hidden = view !== "message";
+		els.importProgress.classList.toggle("is-working", view === "working");
+	}
+
+	function setProgress(fraction, label) {
+		var pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+		els.importFill.style.transform = "scaleX(" + pct / 100 + ")";
+		els.importBar.setAttribute("aria-valuenow", String(pct));
+		if (label) els.importStep.textContent = label;
+	}
+
+	function pickedCount() {
+		return importPicked.filter(Boolean).length;
+	}
+
+	function updateImportButton() {
+		var n = pickedCount();
+		els.importPrimary.disabled = n === 0;
+		els.importPrimary.textContent = n === 0 ? "Add subjects" : "Add " + plural(n, "subject");
+	}
+
+	function renderImportList() {
+		els.importList.textContent = "";
+		importFound.forEach(function (row, i) {
+			var li = el("li", "import-row");
+			var item = el("button", "import-item");
+			item.type = "button";
+			item.setAttribute("role", "checkbox");
+			item.setAttribute("aria-checked", String(importPicked[i]));
+
+			var box = el("span", "check");
+			box.appendChild(icon("check"));
+			item.appendChild(box);
+
+			var text = el("span", "subject-text");
+			text.appendChild(el("span", "subject-name", row.name));
+			text.appendChild(el("span", "subject-units", plural(row.units, "unit")));
+			item.appendChild(text);
+
+			item.appendChild(el("span", "grade-pill" + (row.grades ? "" : " is-empty"),
+				row.grades ? row.grades.toFixed(2) : "No grade yet"));
+
+			item.addEventListener("click", function () {
+				importPicked[i] = !importPicked[i];
+				item.setAttribute("aria-checked", String(importPicked[i]));
+				haptic();
+				updateImportButton();
+			});
+			li.appendChild(item);
+			els.importList.appendChild(li);
+		});
+		updateImportButton();
+	}
+
+	function showImportMessage(title, message) {
+		els.importTitle.textContent = title;
+		els.importMessage.textContent = message;
+		setImportView("message");
+		els.importSecondary.textContent = "Close";
+		els.importPrimary.disabled = false;
+		els.importPrimary.textContent = "Try another image";
+		els.importPrimary.dataset.action = "retry";
+	}
+
+	function startImport(file) {
+		var run = ++importRun;
+		importFound = [];
+		importPicked = [];
+		if (previewUrl) URL.revokeObjectURL(previewUrl);
+		previewUrl = URL.createObjectURL(file);
+		els.importPreview.src = previewUrl;
+		els.importTitle.textContent = "Reading screenshot";
+		els.importSecondary.textContent = "Cancel";
+		els.importPrimary.textContent = "Add subjects";
+		els.importPrimary.disabled = true;
+		els.importPrimary.dataset.action = "add";
+		setProgress(0, "Opening image");
+		setImportView("working");
+		openSheet(els.importer);
+
+		if (!window.GCalcOCR) {
+			showImportMessage("Import unavailable", "The text reader did not load. Close the app and open it again.");
+			return;
+		}
+
+		window.GCalcOCR.read(file, function (f, label) {
+			if (run === importRun) setProgress(f, label);
+		}).then(function (result) {
+			if (run !== importRun) return;
+			if (!result.rows.length) {
+				showImportMessage("No subjects found", "Use a clear screenshot of your grades table, with the subject codes, units and grades visible.");
+				return;
+			}
+			importFound = result.rows;
+			importPicked = result.rows.map(function () { return true; });
+			els.importTitle.textContent = "Found " + plural(result.rows.length, "subject");
+			setImportView("review");
+			renderImportList();
+			haptic();
+		}).catch(function (err) {
+			if (run !== importRun) return;
+			showImportMessage("Could not read image", (err && err.message) || "Something went wrong while reading the image.");
+		});
+	}
+
+	function applyImport() {
+		var chosen = importFound.filter(function (r, i) { return importPicked[i]; });
+		if (!chosen.length) return;
+		var previous = state.rows.map(function (r) {
+			return { id: r.id, name: r.name, grades: r.grades, units: r.units };
+		});
+		var added = 0, updated = 0;
+		chosen.forEach(function (r) {
+			var match = null;
+			for (var i = 0; i < state.rows.length; i++) {
+				if (normName(state.rows[i].name) === normName(r.name)) match = state.rows[i];
+			}
+			if (match) {
+				// Same subject already in the list: refresh it (keep a grade you typed if the image has none).
+				if (r.unitsFound) match.units = r.units;
+				if (r.grades) match.grades = r.grades;
+				updated++;
+			} else {
+				var row = newRow();
+				row.name = r.name;
+				row.units = r.units;
+				row.grades = r.grades;
+				state.rows.push(row);
+				added++;
+			}
+		});
+		saveState();
+		closeSheet(els.importer);
+		render();
+		haptic();
+		var parts = [];
+		if (added) parts.push("Added " + plural(added, "subject"));
+		if (updated) parts.push((added ? "updated " : "Updated ") + updated);
+		showToast(parts.join(", "), function () {
+			state.rows = previous;
+			saveState();
+			render();
+		});
+	}
+
+	els.importBtn.addEventListener("click", function () {
+		els.importInput.value = "";
+		els.importInput.click();
+	});
+
+	els.importInput.addEventListener("change", function () {
+		var file = els.importInput.files && els.importInput.files[0];
+		if (file) startImport(file);
+	});
+
+	els.importPrimary.addEventListener("click", function () {
+		if (els.importPrimary.dataset.action === "retry") {
+			els.importInput.value = "";
+			els.importInput.click();
+		} else {
+			applyImport();
+		}
+	});
+
+	els.importSecondary.addEventListener("click", function () {
+		closeSheet(els.importer);
+	});
+	els.importClose.addEventListener("click", function () {
+		closeSheet(els.importer);
+	});
+	els.importer.addEventListener("click", function (e) {
+		if (e.target !== els.importer) return;
+		var r = els.importer.getBoundingClientRect();
+		var inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+		if (!inside) closeSheet(els.importer);
+	});
+	els.importer.addEventListener("close", function () {
+		importRun++; // drop any read still in progress
+		setImportView("none");
+	});
+
 	/* ---------- Actions ---------- */
 
 	function removeRow(id) {
@@ -535,7 +755,8 @@
 
 	// Offline support when served over http(s) (GitHub Pages / installed web app).
 	// Inside the Android app the files are already on the phone, so this is skipped.
-	if ("serviceWorker" in navigator && /^https?:$/.test(window.location.protocol)) {
+	if ("serviceWorker" in navigator && /^https?:$/.test(window.location.protocol) &&
+		window.location.hostname !== "appassets.androidplatform.net") {
 		window.addEventListener("load", function () {
 			navigator.serviceWorker.register("sw.js").catch(function () {});
 		});

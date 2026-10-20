@@ -35,6 +35,7 @@ Grades, subject names and the theme are saved on the phone, so they are still th
 ## Using it
 
 - Tap **Add subject**, pick a grade and units (3 is selected by default), and optionally type a name. Tap **Next subject** to enter the next one right away, or **Done** when finished.
+- Tap **Import** and pick a screenshot or photo of your grades (for example the CLSU portal grades table). The app reads the subject codes, units and grades on the phone itself, without internet, and shows the list so you can untick anything before adding. Subjects already in your list are updated instead of duplicated.
 - Tap any subject in the list to change it or delete it.
 - Removing a subject or tapping **Clear all** shows an **Undo** button for a few seconds.
 - When you scroll down a long list, a bar at the top keeps showing your GWA.
@@ -43,6 +44,8 @@ Grades, subject names and the theme are saved on the phone, so they are still th
 
 ```
 www/                 The calculator itself (HTML, CSS, JS). Used by both versions.
+www/ocr.js           Screenshot import: image cleanup, text reading, table parsing.
+www/vendor/          Tesseract.js and English OCR data (copied by the "Vendor OCR library" workflow).
 android/             Android app that bundles www/ inside a WebView.
 .github/workflows/   Builds the APK and publishes the web app on every push to main.
 ```
