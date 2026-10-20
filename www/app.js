@@ -1783,7 +1783,7 @@
 		ctx.fillStyle = "rgba(255,255,255,0.12)";
 		ctx.fillRect(CX - 1, y - 60, 2, 120);
 
-		centered("GWA Calculator for CLSU", 1620, "400 32px " + font, muted);
+		centered("Central Luzon State University", 1620, "400 32px " + font, muted);
 		return c;
 	}
 
