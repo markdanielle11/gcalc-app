@@ -34,11 +34,10 @@ Grades, subject names and the theme are saved on the phone, so they are still th
 
 ## Using it
 
-- Tap **Grade** on a subject to pick from the grade grid. Use **-** and **+** to set units (new subjects start at 3).
-- Name a subject (optional) by tapping its title.
-- **Add subject** adds a row and opens the grade picker right away.
+- Tap **Add subject**, pick a grade and units (3 is selected by default), and optionally type a name. Tap **Next subject** to enter the next one right away, or **Done** when finished.
+- Tap any subject in the list to change it or delete it.
 - Removing a subject or tapping **Clear all** shows an **Undo** button for a few seconds.
-- The GWA card stays at the top while you scroll.
+- When you scroll down a long list, a bar at the top keeps showing your GWA.
 
 ## Project layout
 

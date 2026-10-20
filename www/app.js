@@ -12,39 +12,53 @@
 	var STORAGE_KEY = "gcalc-state-v1";
 	var TOAST_MS = 5000;
 
+	function $(id) {
+		return document.getElementById(id);
+	}
+
 	var els = {
 		root: document.documentElement,
-		gwa: document.getElementById("gwa"),
-		standing: document.getElementById("standing"),
-		meta: document.getElementById("meta"),
-		list: document.getElementById("list"),
-		add: document.getElementById("add-btn"),
-		clear: document.getElementById("clear-btn"),
-		themeBtn: document.getElementById("theme-btn"),
+		hero: $("hero"),
+		gwa: $("gwa"),
+		standing: $("standing"),
+		statUnits: $("stat-units"),
+		statSubjects: $("stat-subjects"),
+		list: $("list"),
+		empty: $("empty"),
+		add: $("add-btn"),
+		clear: $("clear-btn"),
+		themeBtn: $("theme-btn"),
 		themeColor: document.querySelector('meta[name="theme-color"]'),
-		sheet: document.getElementById("grade-sheet"),
-		sheetTitle: document.getElementById("sheet-title"),
-		sheetClose: document.getElementById("sheet-close"),
-		gradeGrid: document.getElementById("grade-grid"),
-		toast: document.getElementById("toast"),
-		toastText: document.getElementById("toast-text"),
-		toastUndo: document.getElementById("toast-undo")
+		minibar: $("minibar"),
+		miniGwa: $("mini-gwa"),
+		miniStanding: $("mini-standing"),
+		editor: $("editor"),
+		editorTitle: $("editor-title"),
+		editorClose: $("editor-close"),
+		nameInput: $("name-input"),
+		gradeGrid: $("grade-grid"),
+		unitsGrid: $("units-grid"),
+		editorPrimary: $("editor-primary"),
+		editorPrimaryText: $("editor-primary-text"),
+		editorPrimaryIcon: $("editor-primary-icon"),
+		editorSecondary: $("editor-secondary"),
+		toast: $("toast"),
+		toastText: $("toast-text"),
+		toastUndo: $("toast-undo")
 	};
 
 	var state = loadState();
-	var sheetRowId = null;
+	var editing = null; // { id, isNew }
 	var toastTimer = null;
 	var undoAction = null;
 	var lastGwaText = null;
+	var heroVisible = true;
 
 	/* ---------- State ---------- */
 
-	function newRow(id) {
+	function newRow() {
+		var id = state.rows.reduce(function (max, r) { return Math.max(max, r.id); }, -1) + 1;
 		return { id: id, name: "", grades: 0, units: DEFAULT_UNITS };
-	}
-
-	function nextId() {
-		return state.rows.reduce(function (max, r) { return Math.max(max, r.id); }, -1) + 1;
 	}
 
 	function systemPrefersDark() {
@@ -55,10 +69,14 @@
 		}
 	}
 
+	function isBlank(row) {
+		return row.grades === 0 && row.name.trim() === "";
+	}
+
 	function loadState() {
 		try {
 			var saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY));
-			if (saved && Array.isArray(saved.rows) && saved.rows.length > 0) {
+			if (saved && Array.isArray(saved.rows)) {
 				return {
 					isDark: typeof saved.isDark === "boolean" ? saved.isDark : systemPrefersDark(),
 					rows: saved.rows.map(function (r, i) {
@@ -70,13 +88,13 @@
 							grades: g,
 							units: u >= MIN_UNITS && u <= MAX_UNITS ? u : DEFAULT_UNITS
 						};
-					})
+					}).filter(function (r) { return !isBlank(r); })
 				};
 			}
 		} catch (e) {
 			/* storage unavailable or corrupted: start fresh */
 		}
-		return { isDark: systemPrefersDark(), rows: [newRow(0)] };
+		return { isDark: systemPrefersDark(), rows: [] };
 	}
 
 	function saveState() {
@@ -87,14 +105,14 @@
 		}
 	}
 
-	function isPristine() {
-		return state.rows.length === 1 &&
-			state.rows[0].grades === 0 &&
-			state.rows[0].name === "" &&
-			state.rows[0].units === DEFAULT_UNITS;
+	function findRow(id) {
+		for (var i = 0; i < state.rows.length; i++) {
+			if (state.rows[i].id === id) return state.rows[i];
+		}
+		return null;
 	}
 
-	/* ---------- Computation (same formula and honors as the original) ---------- */
+	/* ---------- Computation (same formula as the original) ---------- */
 
 	function compute(rows) {
 		var totalGrades = 0;
@@ -138,18 +156,20 @@
 		return n + " " + word + (n === 1 ? "" : "s");
 	}
 
-	function rowLabel(row) {
-		var name = row.name.trim();
-		if (name) return name;
+	function defaultName(row) {
 		return "Subject " + (state.rows.indexOf(row) + 1);
 	}
 
-	/* ---------- Icons ---------- */
+	function rowLabel(row) {
+		return row.name.trim() || defaultName(row);
+	}
 
-	function icon(name) {
+	/* ---------- Small helpers ---------- */
+
+	function icon(name, className) {
 		var ns = "http://www.w3.org/2000/svg";
 		var svg = document.createElementNS(ns, "svg");
-		svg.setAttribute("class", "icon");
+		svg.setAttribute("class", "icon" + (className ? " " + className : ""));
 		svg.setAttribute("aria-hidden", "true");
 		var use = document.createElementNS(ns, "use");
 		use.setAttribute("href", "#i-" + name);
@@ -164,115 +184,52 @@
 		return e;
 	}
 
+	// Short vibration on Android for taps that change data. No-op elsewhere.
+	function haptic() {
+		try {
+			if (navigator.vibrate) navigator.vibrate(8);
+		} catch (e) {
+			/* ignore */
+		}
+	}
+
 	/* ---------- Rendering ---------- */
 
-	function buildRow(row, index) {
-		var placeholder = "Subject " + (index + 1);
+	function buildRow(row) {
 		var li = el("li", "subject");
 		li.dataset.id = String(row.id);
 
-		// Name + delete
-		var top = el("div", "subject-top");
-		var name = el("input", "subject-name");
-		name.type = "text";
-		name.value = row.name;
-		name.placeholder = placeholder;
-		name.maxLength = 40;
-		name.autocomplete = "off";
-		name.enterKeyHint = "done";
-		name.setAttribute("aria-label", placeholder + " name (optional)");
-		name.addEventListener("input", function () {
-			row.name = name.value;
-			saveState();
-			renderClearButton();
+		var btn = el("button", "subject-btn");
+		btn.type = "button";
+		var name = row.name.trim();
+		var gradeText = row.grades === 0 ? "No grade" : row.grades.toFixed(2);
+		btn.setAttribute("aria-label",
+			rowLabel(row) + ", grade " + gradeText + ", " + plural(row.units, "unit") + ". Edit");
+
+		var text = el("span", "subject-text");
+		text.appendChild(el("span", "subject-name" + (name ? "" : " is-placeholder"), rowLabel(row)));
+		text.appendChild(el("span", "subject-units", plural(row.units, "unit")));
+		btn.appendChild(text);
+
+		btn.appendChild(el("span", "grade-pill" + (row.grades === 0 ? " is-empty" : ""),
+			row.grades === 0 ? "Set grade" : row.grades.toFixed(2)));
+		btn.appendChild(icon("caret-right", "chevron"));
+
+		btn.addEventListener("click", function () {
+			openEditor(row.id, false);
 		});
-		name.addEventListener("keydown", function (e) {
-			if (e.key === "Enter") name.blur();
-		});
-		top.appendChild(name);
 
-		if (state.rows.length > 1) {
-			var del = el("button", "icon-btn delete-btn");
-			del.type = "button";
-			del.setAttribute("aria-label", "Remove " + (row.name.trim() || placeholder));
-			del.appendChild(icon("trash"));
-			del.addEventListener("click", function () {
-				removeRow(row.id);
-			});
-			top.appendChild(del);
-		}
-		li.appendChild(top);
-
-		// Grade + units
-		var fields = el("div", "subject-fields");
-
-		var grade = el("button", "field grade-btn" + (row.grades === 0 ? " is-empty" : ""));
-		grade.type = "button";
-		grade.dataset.role = "grade";
-		grade.setAttribute("aria-haspopup", "dialog");
-		grade.appendChild(el("span", "field-label", "Grade"));
-		grade.appendChild(el("span", "field-value", row.grades === 0 ? "Select" : row.grades.toFixed(2)));
-		grade.appendChild(icon("caret-down"));
-		grade.setAttribute("aria-label",
-			"Grade for " + (row.name.trim() || placeholder) + ": " + (row.grades === 0 ? "not selected" : row.grades.toFixed(2)));
-		grade.addEventListener("click", function () {
-			openSheet(row.id);
-		});
-		fields.appendChild(grade);
-
-		var stepper = el("div", "field stepper");
-		stepper.setAttribute("role", "group");
-		stepper.setAttribute("aria-label", "Units for " + (row.name.trim() || placeholder));
-
-		var minus = el("button", "step-btn");
-		minus.type = "button";
-		minus.setAttribute("aria-label", "Fewer units");
-		minus.appendChild(icon("minus"));
-		minus.disabled = row.units <= MIN_UNITS;
-
-		var value = el("div", "stepper-value");
-		value.appendChild(el("span", "field-label", "Units"));
-		var out = el("output", "field-value", String(row.units));
-		out.setAttribute("aria-live", "polite");
-		value.appendChild(out);
-
-		var plus = el("button", "step-btn");
-		plus.type = "button";
-		plus.setAttribute("aria-label", "More units");
-		plus.appendChild(icon("plus"));
-		plus.disabled = row.units >= MAX_UNITS;
-
-		function setUnits(u) {
-			row.units = Math.min(MAX_UNITS, Math.max(MIN_UNITS, u));
-			out.textContent = String(row.units);
-			minus.disabled = row.units <= MIN_UNITS;
-			plus.disabled = row.units >= MAX_UNITS;
-			renderSummary();
-			renderClearButton();
-			saveState();
-		}
-		minus.addEventListener("click", function () { setUnits(row.units - 1); });
-		plus.addEventListener("click", function () { setUnits(row.units + 1); });
-
-		stepper.appendChild(minus);
-		stepper.appendChild(value);
-		stepper.appendChild(plus);
-		fields.appendChild(stepper);
-
-		li.appendChild(fields);
+		li.appendChild(btn);
 		return li;
 	}
 
 	function renderList() {
 		els.list.textContent = "";
-		state.rows.forEach(function (row, i) {
-			els.list.appendChild(buildRow(row, i));
+		state.rows.forEach(function (row) {
+			els.list.appendChild(buildRow(row));
 		});
-		renderClearButton();
-	}
-
-	function renderClearButton() {
-		els.clear.disabled = isPristine();
+		els.empty.hidden = state.rows.length > 0;
+		els.clear.disabled = state.rows.length === 0;
 	}
 
 	function renderSummary() {
@@ -291,10 +248,23 @@
 		els.standing.textContent = out.academic;
 		els.standing.hidden = out.academic === "";
 
-		els.meta.textContent = out.counted === 0
-			? plural(0, "unit")
-			: plural(out.totalUnits, "unit") + " · " + plural(out.counted, "subject");
+		els.statUnits.textContent = String(out.totalUnits);
+		els.statSubjects.textContent = String(out.counted);
 
+		els.miniGwa.textContent = text;
+		els.miniStanding.textContent = out.academic;
+		els.miniStanding.hidden = out.academic === "";
+		updateMinibar();
+	}
+
+	function render() {
+		renderList();
+		renderSummary();
+	}
+
+	function updateMinibar() {
+		var show = !heroVisible && state.rows.length > 0;
+		els.minibar.classList.toggle("is-visible", show);
 	}
 
 	function applyTheme() {
@@ -314,77 +284,177 @@
 		}
 	}
 
-	/* ---------- Grade picker ---------- */
+	/* ---------- Editor sheet ---------- */
 
-	function findRow(id) {
-		for (var i = 0; i < state.rows.length; i++) {
-			if (state.rows[i].id === id) return state.rows[i];
-		}
-		return null;
+	function buildChoices(container, values, current, format, onPick) {
+		container.textContent = "";
+		values.forEach(function (v) {
+			var b = el("button", "choice", format(v));
+			b.type = "button";
+			b.setAttribute("role", "radio");
+			b.setAttribute("aria-checked", String(v === current));
+			b.addEventListener("click", function () {
+				Array.prototype.forEach.call(container.children, function (c) {
+					c.setAttribute("aria-checked", String(c === b));
+				});
+				haptic();
+				onPick(v);
+			});
+			container.appendChild(b);
+		});
 	}
 
-	function openSheet(rowId) {
-		var row = findRow(rowId);
+	function fillEditor() {
+		var row = findRow(editing.id);
 		if (!row) return;
-		sheetRowId = rowId;
-		els.sheetTitle.textContent = "Grade for " + rowLabel(row);
 
-		els.gradeGrid.textContent = "";
-		var selected = null;
-		GRADES.forEach(function (g) {
-			var b = el("button", "grade-option", g);
-			b.type = "button";
-			b.setAttribute("role", "option");
-			var isSel = row.grades === parseFloat(g);
-			b.setAttribute("aria-selected", String(isSel));
-			if (isSel) selected = b;
-			b.addEventListener("click", function () {
-				chooseGrade(parseFloat(g));
+		els.editorTitle.textContent = editing.isNew ? "New subject" : "Edit subject";
+		els.nameInput.value = row.name;
+		els.nameInput.placeholder = defaultName(row);
+
+		buildChoices(els.gradeGrid, GRADES.map(parseFloat), row.grades,
+			function (g) { return g.toFixed(2); },
+			function (g) {
+				row.grades = g;
+				saveState();
+				render();
 			});
-			els.gradeGrid.appendChild(b);
+
+		var units = [];
+		for (var u = MIN_UNITS; u <= MAX_UNITS; u++) units.push(u);
+		buildChoices(els.unitsGrid, units, row.units, String, function (u) {
+			row.units = u;
+			saveState();
+			render();
 		});
 
-		if (typeof els.sheet.showModal === "function") {
-			els.sheet.showModal();
+		if (editing.isNew) {
+			els.editorSecondary.textContent = "Done";
+			els.editorSecondary.className = "btn btn-secondary";
+			els.editorPrimaryText.textContent = "Next subject";
+			els.editorPrimaryIcon.style.display = "";
 		} else {
-			els.sheet.setAttribute("open", "");
-		}
-		(selected || els.gradeGrid.firstChild).focus();
-	}
-
-	function closeSheet() {
-		if (typeof els.sheet.close === "function") {
-			els.sheet.close();
-		} else {
-			els.sheet.removeAttribute("open");
+			els.editorSecondary.textContent = "Delete";
+			els.editorSecondary.className = "btn btn-danger";
+			els.editorPrimaryText.textContent = "Done";
+			els.editorPrimaryIcon.style.display = "none";
 		}
 	}
 
-	function chooseGrade(value) {
-		var row = findRow(sheetRowId);
-		if (row) {
-			row.grades = value;
+	function openEditor(id, isNew) {
+		editing = { id: id, isNew: isNew };
+		fillEditor();
+		if (!els.editor.open) {
+			if (typeof els.editor.showModal === "function") {
+				els.editor.showModal();
+			} else {
+				els.editor.setAttribute("open", "");
+			}
+		}
+		els.editor.querySelector(".sheet-body").scrollTop = 0;
+	}
+
+	function closeEditor() {
+		if (typeof els.editor.close === "function") {
+			els.editor.close();
+		} else {
+			els.editor.removeAttribute("open");
+			onEditorClosed();
+		}
+	}
+
+	// Drop a new subject the user opened but never filled in.
+	function discardIfBlank(id) {
+		var row = findRow(id);
+		if (row && isBlank(row)) {
+			state.rows = state.rows.filter(function (r) { return r.id !== id; });
 			saveState();
+			return true;
 		}
-		closeSheet();
-		renderList();
-		renderSummary();
-		focusRowControl(sheetRowId, "grade");
+		return false;
 	}
 
-	function focusRowControl(rowId, role) {
-		var li = els.list.querySelector('[data-id="' + rowId + '"]');
-		var target = li && li.querySelector('[data-role="' + role + '"]');
-		if (target) target.focus({ preventScroll: true });
+	function onEditorClosed() {
+		if (!editing) return;
+		var wasNew = editing.isNew;
+		var id = editing.id;
+		editing = null;
+		var dropped = wasNew && discardIfBlank(id);
+		render();
+		if (wasNew && !dropped) highlightRow(id);
 	}
 
-	els.sheetClose.addEventListener("click", closeSheet);
-	els.sheet.addEventListener("click", function (e) {
+	function highlightRow(id) {
+		var li = els.list.querySelector('[data-id="' + id + '"]');
+		if (!li) return;
+		li.classList.add("is-new");
+		li.scrollIntoView({ block: "nearest", behavior: "smooth" });
+	}
+
+	function startNewSubject() {
+		var row = newRow();
+		state.rows = state.rows.concat([row]);
+		saveState();
+		render();
+		haptic();
+		openEditor(row.id, true);
+	}
+
+	els.editor.addEventListener("close", onEditorClosed);
+	els.editorClose.addEventListener("click", closeEditor);
+
+	els.editor.addEventListener("click", function (e) {
 		// Tap on the dimmed area outside the sheet closes it.
-		if (e.target !== els.sheet) return;
-		var r = els.sheet.getBoundingClientRect();
+		if (e.target !== els.editor) return;
+		var r = els.editor.getBoundingClientRect();
 		var inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-		if (!inside) closeSheet();
+		if (!inside) closeEditor();
+	});
+
+	els.nameInput.addEventListener("input", function () {
+		var row = editing && findRow(editing.id);
+		if (!row) return;
+		row.name = els.nameInput.value;
+		saveState();
+		renderList();
+	});
+
+	els.nameInput.addEventListener("keydown", function (e) {
+		if (e.key === "Enter") {
+			e.preventDefault();
+			els.nameInput.blur();
+		}
+	});
+
+	els.editorPrimary.addEventListener("click", function () {
+		if (!editing) return;
+		if (editing.isNew) {
+			// Keep the sheet open and move straight to the next subject.
+			var prevId = editing.id;
+			discardIfBlank(prevId);
+			var row = newRow();
+			state.rows = state.rows.concat([row]);
+			saveState();
+			render();
+			highlightRow(prevId);
+			haptic();
+			openEditor(row.id, true);
+			els.nameInput.blur();
+		} else {
+			closeEditor();
+		}
+	});
+
+	els.editorSecondary.addEventListener("click", function () {
+		if (!editing) return;
+		if (editing.isNew) {
+			closeEditor();
+		} else {
+			var id = editing.id;
+			editing = null; // handled here, not by the close handler
+			closeEditor();
+			removeRow(id);
+		}
 	});
 
 	/* ---------- Toast with undo ---------- */
@@ -411,20 +481,6 @@
 
 	/* ---------- Actions ---------- */
 
-	function addRow() {
-		var row = newRow(nextId());
-		state.rows = state.rows.concat([row]);
-		saveState();
-		renderList();
-		renderSummary();
-		var li = els.list.lastElementChild;
-		if (li) {
-			li.classList.add("is-new");
-			li.scrollIntoView({ block: "nearest", behavior: "smooth" });
-		}
-		openSheet(row.id);
-	}
-
 	function removeRow(id) {
 		var index = -1;
 		for (var i = 0; i < state.rows.length; i++) {
@@ -434,34 +490,31 @@
 		var removed = state.rows[index];
 		var label = rowLabel(removed);
 		state.rows = state.rows.filter(function (r) { return r.id !== id; });
-		if (state.rows.length === 0) state.rows = [newRow(nextId())];
 		saveState();
-		renderList();
-		renderSummary();
+		render();
+		haptic();
 		showToast("Removed " + label, function () {
 			state.rows.splice(Math.min(index, state.rows.length), 0, removed);
 			saveState();
-			renderList();
-			renderSummary();
+			render();
 		});
 	}
 
 	function clearAll() {
-		if (isPristine()) return;
+		if (state.rows.length === 0) return;
 		var previous = state.rows;
-		state.rows = [newRow(nextId())];
+		state.rows = [];
 		saveState();
-		renderList();
-		renderSummary();
+		render();
+		haptic();
 		showToast("Cleared all subjects", function () {
 			state.rows = previous;
 			saveState();
-			renderList();
-			renderSummary();
+			render();
 		});
 	}
 
-	els.add.addEventListener("click", addRow);
+	els.add.addEventListener("click", startNewSubject);
 	els.clear.addEventListener("click", clearAll);
 	els.themeBtn.addEventListener("click", function () {
 		state.isDark = !state.isDark;
@@ -469,9 +522,16 @@
 		saveState();
 	});
 
+	// Show the compact GWA bar once the big card scrolls out of view.
+	if ("IntersectionObserver" in window) {
+		new IntersectionObserver(function (entries) {
+			heroVisible = entries[0].isIntersecting;
+			updateMinibar();
+		}, { threshold: 0, rootMargin: "-40px 0px 0px 0px" }).observe(els.hero);
+	}
+
 	applyTheme();
-	renderList();
-	renderSummary();
+	render();
 
 	// Offline support when served over http(s) (GitHub Pages / installed web app).
 	// Inside the Android app the files are already on the phone, so this is skipped.
