@@ -17,7 +17,6 @@
 		gwa: document.getElementById("gwa"),
 		standing: document.getElementById("standing"),
 		meta: document.getElementById("meta"),
-		hint: document.getElementById("hint"),
 		list: document.getElementById("list"),
 		add: document.getElementById("add-btn"),
 		clear: document.getElementById("clear-btn"),
@@ -296,26 +295,6 @@
 			? plural(0, "unit")
 			: plural(out.totalUnits, "unit") + " · " + plural(out.counted, "subject");
 
-		els.hint.textContent = hintFor(out);
-	}
-
-	function hintFor(out) {
-		if (out.counted === 0) {
-			return "Choose a grade for each subject to see your GWA.";
-		}
-		var hints = [];
-		var missing = state.rows.length - out.counted;
-		if (missing > 0) {
-			hints.push(plural(missing, "subject") + " without a grade " + (missing === 1 ? "is" : "are") + " not counted yet.");
-		}
-		if (out.academic === "" && out.totalUnits <= HONORS_MIN_UNITS) {
-			var possible = academicStanding(out.result, HONORS_MIN_UNITS + 1);
-			if (possible) {
-				hints.push("Honors need more than " + HONORS_MIN_UNITS + " units. You have " + out.totalUnits +
-					", so " + possible + " will show once you add " + (HONORS_MIN_UNITS + 1 - out.totalUnits) + " more.");
-			}
-		}
-		return hints.join(" ");
 	}
 
 	function applyTheme() {

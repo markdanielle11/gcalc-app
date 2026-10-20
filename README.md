@@ -38,7 +38,7 @@ Grades, subject names and the theme are saved on the phone, so they are still th
 - Name a subject (optional) by tapping its title.
 - **Add subject** adds a row and opens the grade picker right away.
 - Removing a subject or tapping **Clear all** shows an **Undo** button for a few seconds.
-- The GWA card stays at the top while you scroll, and tells you when a GWA would qualify for honors but needs more units.
+- The GWA card stays at the top while you scroll.
 
 ## Project layout
 
